@@ -1,0 +1,383 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Donation Forest 3D — Rotatable with Lineage Tracking</title>
+<style>
+  :root { --bg:#0a0f1f; --panel:#0f1731; --text:#e9eefc; --muted:#a7b0cc; --accent:#6ee7ff; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+               font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+  header { padding:12px 16px; background:linear-gradient(90deg,#0f172a,#111831);
+           border-bottom:1px solid #1f2a4d; }
+  h1 { margin:6px 0 2px 0; font-size:18px; letter-spacing:.3px; }
+  .sub { font-size:12px; color:var(--muted); }
+  .wrap { display:grid; grid-template-columns: 330px 1fr; gap:12px; height:calc(100% - 72px); padding:12px; box-sizing:border-box; }
+  .panel { background:var(--panel); border:1px solid #1f2a4d; border-radius:12px; padding:12px; overflow:auto; }
+  .panel h2 { margin:4px 0 10px 0; font-size:14px; color:var(--muted); }
+  label { font-size:12px; color:var(--muted); }
+  input[type=range], input[type=number] { width:100%; }
+  .row { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin:8px 0; }
+  .btn { background:#273a7a; color:#fff; border:1px solid #3b57b9; padding:8px 10px; border-radius:9px; cursor:pointer; font-weight:600; font-size:12px; }
+  .stats { font-size:12px; color:var(--muted); line-height:1.6; margin-top:8px; }
+  #scene { width:100%; height:100%; border:1px solid #1f2a4d; border-radius:12px;
+           background:
+            radial-gradient(1200px 700px at 65% 35%, rgba(99,102,241,.10), transparent),
+            radial-gradient(800px 500px at 30% 75%, rgba(34,197,94,.08), transparent);
+           position:relative; overflow:hidden; }
+  .legend { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .chip { width:14px; height:14px; border-radius:50%; border:1px solid #334155; }
+  .pill { display:inline-block; padding:2px 6px; border-radius:999px; background:#152047; border:1px solid #28407a; font-size:11px; color:#a7b0cc; }
+  .hint { font-size:11px; color:#9aa3c9; margin-top:8px; }
+  .badge { display:inline-block; padding:2px 6px; border-radius:6px; background:#152047; border:1px solid #28407a; margin-right:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Donation Forest 3D — Rotatable with Lineage Tracking</h1>
+  <div class="sub">Rotate/zoom with mouse (drag to rotate, scroll to zoom, right‑drag to pan). Click a node to highlight its origin path and all descendants.</div>
+</header>
+
+<div class="wrap">
+  <div class="panel">
+    <h2>Simulation Controls</h2>
+    <div class="row"><label>Seed donors (top coins): <span id="seedVal" class="pill">100</span></label>
+      <input id="seeds" type="range" min="10" max="300" step="10" value="100"></div>
+    <div class="row"><label>Max depth (levels): <span id="depthVal" class="pill">6</span></label>
+      <input id="maxDepth" type="range" min="2" max="8" step="1" value="6"></div>
+    <div class="row"><label>Avg “Find ONE More” (branching): <span id="branchVal" class="pill">1.8</span></label>
+      <input id="branch" type="range" min="0.8" max="3.0" step="0.1" value="1.8"></div>
+    <div class="row"><label>Donation min/max ($): <span id="amtVal" class="pill">50–5000</span></label></div>
+    <div class="row"><input id="minAmt" type="range" min="10" max="500" step="10" value="50">
+                      <input id="maxAmt" type="range" min="500" max="10000" step="100" value="5000"></div>
+    <div class="row"><label>Link opacity: <span id="opVal" class="pill">0.35</span></label>
+      <input id="lkOpacity" type="range" min="0.05" max="1.0" step="0.05" value="0.35"></div>
+    <div class="row"><label>Highlight thickness: <span id="thickVal" class="pill">2.5</span></label>
+      <input id="hlThick" type="range" min="1" max="6" step="0.5" value="2.5"></div>
+    <div class="row"><button id="regen" class="btn">Regenerate</button><button id="reset" class="btn">Reset View</button></div>
+
+    <div class="legend">
+      <span class="badge">Depth</span>
+      <div class="chip" style="background:#60a5fa"></div><span class="pill">0</span>
+      <div class="chip" style="background:#34d399"></div><span class="pill">1</span>
+      <div class="chip" style="background:#f59e0b"></div><span class="pill">2</span>
+      <div class="chip" style="background:#f472b6"></div><span class="pill">3</span>
+      <div class="chip" style="background:#a78bfa"></div><span class="pill">4+</span>
+    </div>
+
+    <div class="stats" id="stats"></div>
+    <div class="hint">Tip: Click a node to see its <b>origin path</b> (to the root) and <b>all descendants</b>. Rotate the model to follow the connecting lines easily.</div>
+  </div>
+
+  <div class="panel">
+    <div id="scene"></div>
+  </div>
+</div>
+
+<!-- Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-force-3d@3/build/d3-force-3d.min.js"></script>
+
+<script>
+(function(){
+  const sceneEl = document.getElementById('scene');
+  let width = sceneEl.clientWidth, height = sceneEl.clientHeight;
+
+  // Three.js setup
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  sceneEl.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(55, width/height, 0.1, 5000);
+  camera.position.set(0, 220, 520);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.rotateSpeed = 0.6;
+  controls.zoomSpeed = 0.9;
+  controls.panSpeed = 0.6;
+
+  // Ambient + subtle directional
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+  dir.position.set(300, 500, 400);
+  scene.add(dir);
+
+  // UI elements
+  const seedsR = document.getElementById('seeds');
+  const depthR = document.getElementById('maxDepth');
+  const branchR = document.getElementById('branch');
+  const minAmtR = document.getElementById('minAmt');
+  const maxAmtR = document.getElementById('maxAmt');
+  const lkOpacityR = document.getElementById('lkOpacity');
+  const hlThickR = document.getElementById('hlThick');
+  const statsEl = document.getElementById('stats');
+  const seedVal = document.getElementById('seedVal');
+  const depthVal = document.getElementById('depthVal');
+  const branchVal = document.getElementById('branchVal');
+  const amtVal = document.getElementById('amtVal');
+  const opVal = document.getElementById('opVal');
+  const thickVal = document.getElementById('thickVal');
+
+  function syncLabels(){
+    seedVal.textContent = seedsR.value;
+    depthVal.textContent = depthR.value;
+    branchVal.textContent = branchR.value;
+    amtVal.textContent = `${minAmtR.value}–${maxAmtR.value}`;
+    opVal.textContent = lkOpacityR.value;
+    thickVal.textContent = hlThickR.value;
+  }
+  [seedsR, depthR, branchR, minAmtR, maxAmtR, lkOpacityR, hlThickR].forEach(el=> el.addEventListener('input', syncLabels));
+  syncLabels();
+
+  // Data state
+  let nodes = [], links = [], spheres = [], linkLines = null, highlightLines = null;
+  let forceSim = null;
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  function rngSeeded(seed){
+    return function(){
+      let t = seed += 0x6D2B79F5;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+  }
+
+  function generate(opts){
+    const rnd = rngSeeded(123456 + Math.floor(Math.random()*1e6));
+    nodes = []; links = [];
+    let id = 0;
+    function addNode(depth, parentId=null){
+      const amt = Math.round(d3.interpolateNumber(opts.minAmt, opts.maxAmt)(Math.pow(rnd(), 0.7)));
+      const n = { id:id++, depth, amount: amt, parentId, x:(rnd()*2-1)*200, y:(rnd()*2-1)*200, z:(rnd()*2-1)*200 };
+      nodes.push(n);
+      if(parentId !== null) links.push({ source: parentId, target: n.id });
+      return n;
+    }
+    function children(avg){
+      const p = Math.min(0.95, avg/3.0);
+      let c=0; for(let i=0;i<4;i++) if(Math.random()<p) c++;
+      return Math.max(0, Math.round(c + (avg-1.3)*(Math.random()*0.8-0.4)));
+    }
+    const roots=[]; for(let i=0;i<opts.seeds;i++) roots.push(addNode(0, null));
+    let frontier = roots;
+    for(let d=1; d<=opts.maxDepth; d++){
+      const next=[];
+      for(const p of frontier){
+        const k=children(opts.branch);
+        for(let i=0;i<k;i++) next.push(addNode(d, p.id));
+      }
+      frontier = next;
+    }
+  }
+
+  function buildIndex(){
+    const byId = new Map(nodes.map(n=>[n.id, n]));
+    const children = new Map(nodes.map(n=>[n.id, []]));
+    const parents = new Map(nodes.map(n=>[n.id, n.parentId]));
+    links.forEach(l=>{
+      const pid = (typeof l.source === 'object') ? l.source.id : l.source;
+      const cid = (typeof l.target === 'object') ? l.target.id : l.target;
+      children.get(pid).push(cid);
+    });
+    return { byId, children, parents };
+  }
+
+  function colorForDepth(d){
+    return (d<=0) ? 0x60a5fa :
+           (d===1) ? 0x34d399 :
+           (d===2) ? 0xf59e0b :
+           (d===3) ? 0xf472b6 : 0xa78bfa;
+  }
+
+  function buildScene(opts){
+    // Clear old objects
+    if(linkLines){ scene.remove(linkLines); linkLines.geometry.dispose(); linkLines.material.dispose(); linkLines=null; }
+    if(highlightLines){ scene.remove(highlightLines); highlightLines.geometry.dispose(); highlightLines.material.dispose(); highlightLines=null; }
+    spheres.forEach(s=>{ scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); });
+    spheres = [];
+
+    // Node spheres (size by donation amount)
+    const minR=2.5, maxR=12;
+    const size = v => minR + (maxR-minR) * ((v - +minAmtR.value) / ( +maxAmtR.value - +minAmtR.value ));
+    nodes.forEach(n=>{
+      const geo = new THREE.SphereGeometry(size(n.amount), 18, 18);
+      const mat = new THREE.MeshStandardMaterial({ color: colorForDepth(n.depth), metalness:0.2, roughness:0.4 });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(n.x, n.y, n.z);
+      mesh.userData.id = n.id;
+      scene.add(mesh);
+      spheres.push({node:n, mesh});
+    });
+
+    // Build connector lines
+    const positions = new Float32Array(links.length * 6);
+    let idx = 0;
+    links.forEach(l=>{
+      const s = nodes[(typeof l.source==='object')? l.source.id : l.source];
+      const t = nodes[(typeof l.target==='object')? l.target.id : l.target];
+      positions[idx++] = s.x; positions[idx++] = s.y; positions[idx++] = s.z;
+      positions[idx++] = t.x; positions[idx++] = t.y; positions[idx++] = t.z;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x5b6b95, transparent:true, opacity: +lkOpacityR.value });
+    linkLines = new THREE.LineSegments(geo, mat);
+    scene.add(linkLines);
+  }
+
+  function layoutAndRender(opts){
+    generate(opts);
+    const sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).id(d=>d.id).distance(d=> 50 + d.source.depth*12).strength(0.25))
+      .force("charge", d3.forceManyBody().strength(-25))
+      .force("center", d3.forceCenter(0,0,0))
+      .force("collision", d3.forceCollide(8))
+      .stop();
+
+    for(let i=0;i<300;i++) sim.tick(); // run layout
+
+    forceSim = sim;
+    buildScene(opts);
+    updateStats();
+  }
+
+  function updateStats(){
+    const byDepth = new Map();
+    nodes.forEach(n=>{
+      if(!byDepth.has(n.depth)) byDepth.set(n.depth, {count:0, sum:0});
+      const row = byDepth.get(n.depth);
+      row.count++; row.sum += n.amount;
+    });
+    const totalDonors = nodes.length;
+    const totalRaised = nodes.reduce((a,b)=>a+b.amount,0);
+    let html = `<div><b>Seeds:</b> ${+seedsR.value} &nbsp; <b>Total donors:</b> ${totalDonors.toLocaleString()} &nbsp; <b>Est. raised:</b> $${Math.round(totalRaised).toLocaleString()}</div>`;
+    html += `<div><b>Level breakdown</b></div>`;
+    Array.from(byDepth.entries()).sort((a,b)=>a[0]-b[0]).forEach(([depth, {count,sum}])=>{
+      html += `<div>Level ${depth}: <span class="pill">${count.toLocaleString()} donors</span> — $${Math.round(sum).toLocaleString()}</div>`;
+    });
+    statsEl.innerHTML = html;
+  }
+
+  function onResize(){
+    width = sceneEl.clientWidth; height = sceneEl.clientHeight;
+    camera.aspect = width/height; camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+  }
+  window.addEventListener('resize', onResize);
+
+  // Picking
+  function onClick(ev){
+    const rect = renderer.domElement.getBoundingClientRect();
+    mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = - ((ev.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(spheres.map(s=>s.mesh));
+    if(intersects.length){
+      const id = intersects[0].object.userData.id;
+      highlightLineage(id);
+    }
+  }
+  renderer.domElement.addEventListener('click', onClick);
+
+  function highlightLineage(id){
+    const { byId, children, parents } = buildIndex();
+    // Collect ancestors (to root) and descendants (all levels)
+    const pathUp = [];
+    let cur = parents.get(id);
+    while(cur!==null && cur!==undefined){ pathUp.push(cur); cur = parents.get(cur); }
+
+    const pathDown = [];
+    const queue = [id];
+    while(queue.length){
+      const v = queue.shift();
+      const kids = children.get(v)||[];
+      for(const k of kids){ pathDown.push(k); queue.push(k); }
+    }
+
+    // Dim others, brighten selected lineage
+    const keep = new Set([id, ...pathUp, ...pathDown]);
+    spheres.forEach(s=>{
+      s.mesh.material.opacity = keep.has(s.node.id) ? 1 : 0.25;
+      s.mesh.material.transparent = true;
+    });
+    linkLines.material.opacity = 0.12;
+
+    // Build bright lineage lines
+    if(highlightLines){ scene.remove(highlightLines); highlightLines.geometry.dispose(); highlightLines.material.dispose(); }
+    const chosen = links.filter(l=> keep.has( (typeof l.source==='object')? l.source.id : l.source ) &&
+                                     keep.has( (typeof l.target==='object')? l.target.id : l.target ));
+    const pos = new Float32Array(chosen.length * 6);
+    let i=0;
+    chosen.forEach(l=>{
+      const s = nodes[(typeof l.source==='object')? l.source.id : l.source];
+      const t = nodes[(typeof l.target==='object')? l.target.id : l.target];
+      pos[i++] = s.x; pos[i++] = s.y; pos[i++] = s.z;
+      pos[i++] = t.x; pos[i++] = t.y; pos[i++] = t.z;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x6ee7ff, linewidth: +hlThickR.value, transparent:true, opacity:0.95 });
+    highlightLines = new THREE.LineSegments(geo, mat);
+    scene.add(highlightLines);
+
+    // Center camera around selected node
+    const n = nodes[id];
+    const target = new THREE.Vector3(n.x, n.y, n.z);
+    // Smooth move
+    const from = camera.position.clone();
+    const to = target.clone().add(new THREE.Vector3(0, 80, 180));
+    let t = 0; const dur = 22;
+    (function animateCam(){
+      t++;
+      const k = Math.min(1, t/dur);
+      camera.position.lerpVectors(from, to, k);
+      controls.target.lerpVectors(controls.target.clone(), target, k);
+      if(k<1) requestAnimationFrame(animateCam);
+    })();
+
+    // Basic lineage stats
+    const descendantCount = pathDown.length;
+    const originPath = pathUp.slice().reverse(); // from root to parent
+    const levelsDeep = (new Set(originPath)).size + 1; // include node
+    statsEl.innerHTML += `<div style="margin-top:8px;border-top:1px solid #1f2a4d;padding-top:8px">
+      <b>Focused node:</b> ${id} &nbsp; <b>Depth:</b> ${byId.get(id).depth}<br/>
+      <b>Origin length:</b> ${originPath.length} &nbsp; <b>Descendants:</b> ${descendantCount}</div>`;
+  }
+
+  // Buttons
+  document.getElementById('regen').addEventListener('click', ()=>{
+    layoutAndRender({
+      seeds:+seedsR.value, maxDepth:+depthR.value, branch:+branchR.value, minAmt:+minAmtR.value, maxAmt:+maxAmtR.value
+    });
+  });
+  document.getElementById('reset').addEventListener('click', ()=>{
+    controls.reset(); camera.position.set(0,220,520);
+    spheres.forEach(s=>{ s.mesh.material.opacity = 1; s.mesh.material.transparent = true; });
+    if(linkLines) linkLines.material.opacity = +lkOpacityR.value;
+    if(highlightLines){ scene.remove(highlightLines); highlightLines.geometry.dispose(); highlightLines.material.dispose(); highlightLines=null; }
+  });
+
+  // First render
+  layoutAndRender({
+    seeds:+seedsR.value, maxDepth:+depthR.value, branch:+branchR.value, minAmt:+minAmtR.value, maxAmt:+maxAmtR.value
+  });
+
+  // Render loop
+  function animate(){
+    controls.update();
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+  animate();
+})();
+</script>
+</body>
+</html>
