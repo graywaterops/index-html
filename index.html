@@ -1,1 +1,15 @@
-<!doctype html><html><body style="margin:0;padding:40px;font:32px/1.3 system-ui">HELLO FROM GITHUB P
+<!doctype html>
+<html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Sanity JS</title>
+<style>html,body{margin:0;height:100%;background:#0b1020}#root{width:100%;height:100%;position:relative}</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const r=document.getElementById('root');
+const box=document.createElement('div');
+box.style.cssText="position:absolute;left:50%;top:50%;width:120px;height:120px;background:#00ff66;transform:translate(-50%,-50%)";
+r.appendChild(box);
+console.log("JS OK");
+</script>
+</body></html>
