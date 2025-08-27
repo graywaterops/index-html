@@ -1,97 +1,20 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Smart Coin® Donor Dedication Map</title>
-<style>
-  html,body {margin:0;height:100%;background:#0b1020;color:#fff;font-family:sans-serif;}
-  #scene {width:100%;height:100%;}
-  #legend {
-    position:absolute;top:10px;left:10px;background:#121a36;padding:10px;border-radius:8px;
-    font-size:13px;line-height:1.4;border:1px solid #1f2a4d;
-  }
-  .chip {display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;}
-</style>
-</head>
-<body>
-<div id="legend">
-  <div><span class="chip" style="background:#1e3a8a"></span> Dark blue = top donors</div>
-  <div><span class="chip" style="background:#93c5fd"></span> Light blue = +1 supporter</div>
-  <div><span class="chip" style="background:#22c55e"></span> Green = extras (&gt;1)</div>
-  <div><span class="chip" style="background:#ef4444"></span> Red = downstream seeds</div>
-</div>
-<div id="scene"></div>
-
+<!doctype html><html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>3D Test</title>
+<style>html,body{margin:0;height:100%;background:#0b1020}#app{width:100%;height:100%}</style>
+</head><body><div id="app"></div>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
 <script>
-(function(){
-  const sceneEl=document.getElementById("scene");
-  const renderer=new THREE.WebGLRenderer({antialias:true});
-  sceneEl.appendChild(renderer.domElement);
-  const scene=new THREE.Scene();
-  scene.background=new THREE.Color(0x0b1020);
-  const camera=new THREE.PerspectiveCamera(55,1,0.1,5000);
-  camera.position.set(0,200,500);
-  const controls=new THREE.OrbitControls(camera,renderer.domElement);
-  scene.add(new THREE.AmbientLight(0xffffff,0.9));
-  const dir=new THREE.DirectionalLight(0xffffff,0.5);dir.position.set(300,500,400);scene.add(dir);
-
-  const nodes=[],links=[],spheres=[];
-  let edgeLines;
-  const rnd=()=>Math.random();
-
-  // Build graph
-  let id=0;
-  function addNode(type,parent=null){
-    const n={id:id++,type,parent,children:[]};nodes.push(n);
-    if(parent!=null){links.push({source:parent,target:n.id});nodes[parent].children.push(n.id);}
-    return n;
-  }
-  for(let i=0;i<50;i++) addNode("dark"); // fewer nodes for speed
-  nodes.filter(n=>n.type==="dark").forEach(d=>{
-    addNode("light",d.id);
-    if(rnd()<0.3){const g=addNode("green",d.id);addNode("red",g.id);}
-  });
-
-  // Position nodes roughly in sphere
-  nodes.forEach(n=>{
-    n.x=(rnd()*2-1)*200;
-    n.y=(rnd()*2-1)*200;
-    n.z=(rnd()*2-1)*200;
-  });
-
-  // Draw
-  function colorFor(t){return t==="dark"?0x1e3a8a:t==="light"?0x93c5fd:t==="green"?0x22c55e:0xef4444;}
-  nodes.forEach(n=>{
-    const geo=new THREE.SphereGeometry(5,16,16);
-    const mat=new THREE.MeshStandardMaterial({color:colorFor(n.type)});
-    const mesh=new THREE.Mesh(geo,mat);
-    mesh.position.set(n.x,n.y,n.z);
-    mesh.userData.id=n.id;
-    scene.add(mesh);spheres.push(mesh);
-  });
-  const pos=new Float32Array(links.length*6);
-  let i=0;links.forEach(l=>{
-    const s=nodes[l.source],t=nodes[l.target];
-    pos[i++]=s.x;pos[i++]=s.y;pos[i++]=s.z;
-    pos[i++]=t.x;pos[i++]=t.y;pos[i++]=t.z;
-  });
-  const geo=new THREE.BufferGeometry();
-  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
-  const mat=new THREE.LineBasicMaterial({color:0x5b6b95,opacity:0.35,transparent:true});
-  edgeLines=new THREE.LineSegments(geo,mat);scene.add(edgeLines);
-
-  function resize(){
-    const w=sceneEl.clientWidth,h=sceneEl.clientHeight;
-    camera.aspect=w/h;camera.updateProjectionMatrix();
-    renderer.setSize(w,h);
-  }
-  window.addEventListener("resize",resize);resize();
-
-  (function animate(){controls.update();renderer.render(scene,camera);requestAnimationFrame(animate)})();
-})();
-</script>
-</body>
-</html>
+const el=document.getElementById('app');
+const r=new THREE.WebGLRenderer({antialias:true}); el.appendChild(r.domElement);
+const s=new THREE.Scene(); s.background=new THREE.Color(0x0b1020);
+const c=new THREE.PerspectiveCamera(55,1,0.1,2000); c.position.set(0,0,6);
+const ctrl=new THREE.OrbitControls(c,r.domElement);
+const a=new THREE.AmbientLight(0xffffff,.9); s.add(a);
+const m=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshStandardMaterial({color:0x00ff66}));
+s.add(m);
+function size(){const w=el.clientWidth||window.innerWidth,h=el.clientHeight||window.innerHeight;r.setSize(w,h);c.aspect=w/h;c.updateProjectionMatrix()}
+window.addEventListener('resize',size); setTimeout(size,50); setTimeout(size,250);
+(function anim(){m.rotation.x+=0.01;m.rotation.y+=0.01;ctrl.update();r.render(s,c);requestAnimationFrame(anim)})()
+</script></body></html>
