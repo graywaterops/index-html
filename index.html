@@ -16,8 +16,10 @@
   .legend { font-size:12px; line-height:1.6; }
   .chip { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:middle; border:1px solid #2f3b66;}
   #scene { width:100%; height:100%; border:1px solid #1f2a4d; border-radius:12px; position:relative; overflow:hidden; }
-  .btn { display:inline-block; padding:6px 10px; border-radius:8px; background:#2b3f89; color:#fff; font-weight:600; text-decoration:none; border:1px solid #3e57c0;}
+  .btn { display:inline-block; padding:6px 10px; border-radius:8px; background:#2b3f89; color:#fff; font-weight:600; text-decoration:none; border:1px solid #3e57c0; cursor:pointer; }
   .note { font-size:11px; color:#9aa3c9; margin-top:8px;}
+  .stack { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  #status { font-size:12px; color:#9aa3c9; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -34,11 +36,14 @@
     </div>
     <div class="note">
       • Drag to rotate · Scroll/Pinch to zoom · Right-drag to pan<br/>
-      • Click any dot to highlight that donor’s <b>entire downline</b>.
+      • Click any dot to highlight that donor’s <b>entire downline</b> (all descendants).
     </div>
-    <p style="margin-top:10px">
-      <a class="btn" href="#" id="regen">Regenerate</a>
-    </p>
+    <div class="stack">
+      <a id="modeCube" class="btn">Show Test Cube</a>
+      <a id="modeMap"  class="btn">Show Donor Map</a>
+      <a id="regen"    class="btn">Regenerate</a>
+    </div>
+    <div id="status">Status: ready</div>
   </div>
   <div class="panel"><div id="scene"></div></div>
 </div>
@@ -58,8 +63,10 @@
   const COLOR_DARK = 0x1e3a8a, COLOR_LIGHT = 0x93c5fd, COLOR_GREEN = 0x22c55e, COLOR_RED = 0xef4444;
   const COLOR_EDGE_DIM = 0x5b6b95, COLOR_EDGE_HI = 0x6ee7ff;
 
-  // ===== Three setup =====
   const sceneEl = document.getElementById('scene');
+  const statusEl = document.getElementById('status');
+
+  // ===== Three setup =====
   const renderer = new THREE.WebGLRenderer({antialias:true});
   sceneEl.appendChild(renderer.domElement);
 
@@ -76,7 +83,7 @@
   scene.add(new THREE.AmbientLight(0xffffff, 0.85));
   const dir = new THREE.DirectionalLight(0xffffff, 0.55); dir.position.set(300, 500, 400); scene.add(dir);
 
-  // Robust sizing (works in iframes too)
+  // Robust sizing (works within Squarespace iframe)
   function setSizeToContainer() {
     const w = sceneEl.clientWidth || sceneEl.parentElement.clientWidth || window.innerWidth;
     const h = sceneEl.clientHeight || sceneEl.parentElement.clientHeight || Math.round(window.innerHeight * 0.7);
@@ -93,20 +100,13 @@
     ro.observe(document.body);
   }
 
-  // ===== Graph data =====
-  let nodes=[], links=[];
-  const spheres=[];     // {mesh, node}
-  let edgeLines, edgeGeo, edgePos;
-  let highlightLines;
-
-  // RNG
+  // ===== Utility =====
   function rng(seed=Date.now()){
     let t = seed>>>0;
     return ()=>{ t += 0x6D2B79F5; let r = Math.imul(t ^ t>>>15, 1 | t); r ^= r + Math.imul(r ^ r>>>7, 61 | r); return ((r ^ r>>>14)>>>0) / 4294967296; };
   }
   const rnd = rng();
 
-  // Fibonacci sphere for even 3D placement of initial dark nodes
   function fibSphere(n, radius=260){
     const pts=[]; const phi = Math.PI * (3 - Math.sqrt(5));
     for(let i=0;i<n;i++){
@@ -120,179 +120,223 @@
     return pts;
   }
 
-  function buildGraph(){
-    nodes=[]; links=[];
-    let id = 0;
-    function addNode(type, parentId=null){
-      const node = { id:id++, type, parent:parentId, children:[] };
-      nodes.push(node);
-      if(parentId!=null){
-        links.push({source: parentId, target: node.id});
-        const p = nodes.find(n=>n.id===parentId); if(p) p.children.push(node.id);
-      }
-      return node;
+  // ===== Scene objects (shared) =====
+  let animationId = 0;
+  let currentMode = 'map'; // 'cube' | 'map'
+  let objectsToDispose = [];
+
+  function clearSceneKeepLights(){
+    // remove meshes/lines added previously
+    for(const obj of objectsToDispose){
+      scene.remove(obj);
+      if(obj.geometry) obj.geometry.dispose();
+      if(obj.material) obj.material.dispose();
     }
+    objectsToDispose = [];
+  }
 
-    // Initial donors (dark)
-    for(let i=0;i<INITIAL_DONORS;i++) addNode('dark', null);
+  // ===== Test Cube Mode =====
+  function showCube(){
+    try{
+      statusEl.textContent = 'Status: rendering test cube…';
+      clearSceneKeepLights();
 
-    // Each dark -> one light; some darks -> green extras (+ red downstream)
-    for(let i=0;i<INITIAL_DONORS;i++){
-      const darkId = i;
-      addNode('light', darkId);
-      if(rnd() < EXTRA_PROB){
-        const extras = Math.floor(rnd()*(EXTRAS_MAX-EXTRAS_MIN+1)) + EXTRAS_MIN;
-        for(let k=0;k<extras;k++){
-          const g = addNode('green', darkId);
-          for(let r=0;r<RED_CHILDREN_PER_GREEN;r++) addNode('red', g.id);
+      const geo = new THREE.BoxGeometry(80,80,80);
+      const mat = new THREE.MeshStandardMaterial({ color: 0x00ff66 });
+      const cube = new THREE.Mesh(geo, mat);
+      scene.add(cube); objectsToDispose.push(cube);
+
+      cancelAnimationFrame(animationId);
+      function loop(){
+        cube.rotation.x += 0.01;
+        cube.rotation.y += 0.015;
+        controls.update();
+        renderer.render(scene, camera);
+        animationId = requestAnimationFrame(loop);
+      }
+      setSizeToContainer();
+      loop();
+      currentMode = 'cube';
+      statusEl.textContent = 'Status: cube mode — OK. Switch to “Show Donor Map” when ready.';
+    }catch(err){
+      statusEl.textContent = 'Error in cube mode: ' + err.message;
+      console.error(err);
+    }
+  }
+
+  // ===== Donor Map Mode =====
+  function showMap(){
+    try{
+      statusEl.textContent = 'Status: building donor map…';
+
+      // build graph
+      const nodes=[], links=[];
+      let id = 0;
+      function addNode(type, parentId=null){
+        const node = { id:id++, type, parent:parentId, children:[] };
+        nodes.push(node);
+        if(parentId!=null){
+          links.push({source: parentId, target: node.id});
+          const p = nodes.find(n=>n.id===parentId); if(p) p.children.push(node.id);
+        }
+        return node;
+      }
+      for(let i=0;i<INITIAL_DONORS;i++) addNode('dark', null);
+
+      for(let i=0;i<INITIAL_DONORS;i++){
+        const darkId = i;
+        addNode('light', darkId);
+        if(rnd() < EXTRA_PROB){
+          const extras = Math.floor(rnd()*(EXTRAS_MAX-EXTRAS_MIN+1)) + EXTRAS_MIN;
+          for(let k=0;k<extras;k++){
+            const g = addNode('green', darkId);
+            for(let r=0;r<RED_CHILDREN_PER_GREEN;r++) addNode('red', g.id);
+          }
         }
       }
-    }
-
-    // Each light -> another light; some lights -> green + red
-    const lightIds = nodes.filter(n=>n.type==='light').map(n=>n.id);
-    lightIds.forEach(lid=>{
-      addNode('light', lid);
-      if(rnd() < EXTRA_PROB*0.7){
-        const g = addNode('green', lid);
-        addNode('red', g.id);
-      }
-    });
-  }
-
-  function colorFor(type){
-    if(type==='dark') return COLOR_DARK;
-    if(type==='light') return COLOR_LIGHT;
-    if(type==='green') return COLOR_GREEN;
-    return COLOR_RED;
-  }
-
-  function placeNodes(){
-    const dark = nodes.filter(n=>n.type==='dark');
-    const pts = fibSphere(dark.length, 260);
-    dark.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
-
-    // Non-darks cluster around their parent with jitter
-    nodes.forEach(n=>{
-      if(n.type!=='dark'){
-        const p = nodes.find(x=>x.id===n.parent) || {x:0,y:0,z:0};
-        const j = ()=> (rnd()*2-1)*30;
-        n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
-      }
-    });
-  }
-
-  function draw(){
-    // Clear previous
-    spheres.splice(0).forEach(s=>{ scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); });
-    if(edgeLines){ scene.remove(edgeLines); edgeLines.geometry.dispose(); edgeLines.material.dispose(); edgeLines=null; }
-    if(highlightLines){ scene.remove(highlightLines); highlightLines.geometry.dispose(); highlightLines.material.dispose(); highlightLines=null; }
-
-    // Nodes
-    nodes.forEach(n=>{
-      const size = n.type==='dark'? 5.2 : n.type==='light'? 4 : n.type==='green'? 4.4 : 3.8;
-      const geo = new THREE.SphereGeometry(size, 18, 18);
-      const mat = new THREE.MeshStandardMaterial({ color: colorFor(n.type), metalness:0.15, roughness:0.45 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(n.x, n.y, n.z);
-      mesh.userData.id = n.id;
-      scene.add(mesh);
-      spheres.push({mesh, node:n});
-    });
-
-    // Edges
-    edgePos = new Float32Array(links.length*6);
-    edgeGeo = new THREE.BufferGeometry();
-    edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePos,3));
-    const lineMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_DIM, transparent:true, opacity:0.35 });
-    edgeLines = new THREE.LineSegments(edgeGeo, lineMat);
-    scene.add(edgeLines);
-
-    let i=0;
-    links.forEach(l=>{
-      const s = nodes.find(n=>n.id===l.source);
-      const t = nodes.find(n=>n.id===l.target);
-      edgePos[i++]=s.x; edgePos[i++]=s.y; edgePos[i++]=s.z;
-      edgePos[i++]=t.x; edgePos[i++]=t.y; edgePos[i++]=t.z;
-    });
-    edgeGeo.attributes.position.needsUpdate = true;
-  }
-
-  function clearHighlight(){
-    if(highlightLines){
-      scene.remove(highlightLines);
-      highlightLines.geometry.dispose();
-      highlightLines.material.dispose();
-      highlightLines = null;
-    }
-    spheres.forEach(s=>{ s.mesh.material.opacity = 1; s.mesh.material.transparent = false; });
-    if(edgeLines) edgeLines.material.opacity = 0.35;
-  }
-
-  function highlightDownline(startId){
-    clearHighlight();
-    // BFS descendants
-    const keep = new Set([startId]);
-    const q = [startId];
-    while(q.length){
-      const cur = q.shift();
-      links.filter(l=>l.source===cur).forEach(l=>{
-        if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); }
+      const lightIds = nodes.filter(n=>n.type==='light').map(n=>n.id);
+      lightIds.forEach(lid=>{
+        addNode('light', lid);
+        if(rnd() < EXTRA_PROB*0.7){
+          const g = addNode('green', lid);
+          addNode('red', g.id);
+        }
       });
+
+      // place nodes
+      const dark = nodes.filter(n=>n.type==='dark');
+      const pts = fibSphere(dark.length, 260);
+      dark.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
+      nodes.forEach(n=>{
+        if(n.type!=='dark'){
+          const p = nodes.find(x=>x.id===n.parent) || {x:0,y:0,z:0};
+          const j = ()=> (rnd()*2-1)*30;
+          n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
+        }
+      });
+
+      // draw nodes
+      clearSceneKeepLights();
+      const spheres=[], allObjects=[];
+      function colorFor(type){
+        if(type==='dark') return 0x1e3a8a;
+        if(type==='light') return 0x93c5fd;
+        if(type==='green') return 0x22c55e;
+        return 0xef4444;
+      }
+      nodes.forEach(n=>{
+        const size = n.type==='dark'? 5.2 : n.type==='light'? 4 : n.type==='green'? 4.4 : 3.8;
+        const geo = new THREE.SphereGeometry(size, 18, 18);
+        const mat = new THREE.MeshStandardMaterial({ color: colorFor(n.type), metalness:0.15, roughness:0.45 });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.set(n.x, n.y, n.z);
+        mesh.userData.id = n.id;
+        scene.add(mesh); spheres.push(mesh); allObjects.push(mesh);
+      });
+
+      // draw edges
+      const pos = new Float32Array(links.length*6);
+      let i=0;
+      links.forEach(l=>{
+        const s = nodes.find(n=>n.id===l.source);
+        const t = nodes.find(n=>n.id===l.target);
+        pos[i++]=s.x; pos[i++]=s.y; pos[i++]=s.z;
+        pos[i++]=t.x; pos[i++]=t.y; pos[i++]=t.z;
+      });
+      const edgeGeo = new THREE.BufferGeometry();
+      edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+      const edgeMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_DIM, transparent:true, opacity:0.35 });
+      const edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
+      scene.add(edgeLines); allObjects.push(edgeLines);
+
+      // highlight downline on click
+      let glowLines = null;
+      const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2();
+
+      function clearHighlight(){
+        if(glowLines){ scene.remove(glowLines); glowLines.geometry.dispose(); glowLines.material.dispose(); glowLines = null; }
+        spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
+        edgeLines.material.opacity = 0.35;
+      }
+
+      function highlightDownline(startId){
+        clearHighlight();
+        const keep = new Set([startId]);
+        const q = [startId];
+        while(q.length){
+          const cur = q.shift();
+          links.filter(l=>l.source===cur).forEach(l=>{
+            if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); }
+          });
+        }
+        spheres.forEach(m=>{
+          const on = keep.has(m.userData.id);
+          m.material.transparent = true;
+          m.material.opacity = on ? 1 : 0.12;
+        });
+        edgeLines.material.opacity = 0.08;
+
+        const kept = links.filter(l=> keep.has(l.source) && keep.has(l.target));
+        const glowPos = new Float32Array(kept.length*6);
+        let j=0;
+        kept.forEach(l=>{
+          const s = nodes.find(n=>n.id===l.source);
+          const t = nodes.find(n=>n.id===l.target);
+          glowPos[j++]=s.x; glowPos[j++]=s.y; glowPos[j++]=s.z;
+          glowPos[j++]=t.x; glowPos[j++]=t.y; glowPos[j++]=t.z;
+        });
+        const glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos,3));
+        const glowMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_HI, transparent:true, opacity:0.95 });
+        glowLines = new THREE.LineSegments(glowGeo, glowMat);
+        scene.add(glowLines); allObjects.push(glowLines);
+      }
+
+      function onPointer(ev){
+        const rect = renderer.domElement.getBoundingClientRect();
+        const px = ( (ev.clientX||ev.touches?.[0].clientX) - rect.left ) / rect.width;
+        const py = ( (ev.clientY||ev.touches?.[0].clientY) - rect.top ) / rect.height;
+        mouse.x = px*2-1; mouse.y = -(py*2-1);
+        raycaster.setFromCamera(mouse, camera);
+        const hits = raycaster.intersectObjects(spheres, true);
+        if(hits.length){ highlightDownline(hits[0].object.userData.id); }
+        else { clearHighlight(); }
+      }
+      renderer.domElement.addEventListener('click', onPointer);
+      renderer.domElement.addEventListener('touchend', onPointer);
+
+      // animate
+      cancelAnimationFrame(animationId);
+      function loop(){
+        controls.update();
+        renderer.render(scene, camera);
+        animationId = requestAnimationFrame(loop);
+      }
+      setSizeToContainer();
+      loop();
+
+      // track disposables
+      objectsToDispose = allObjects;
+      currentMode = 'map';
+      statusEl.textContent = 'Status: donor map mode — OK. Click a node to highlight full downline.';
+    }catch(err){
+      statusEl.textContent = 'Error in donor map mode: ' + err.message;
+      console.error(err);
     }
-    // Fade others
-    spheres.forEach(s=>{
-      const on = keep.has(s.node.id);
-      s.mesh.material.transparent = true;
-      s.mesh.material.opacity = on ? 1 : 0.12;
-    });
-    if(edgeLines) edgeLines.material.opacity = 0.08;
-
-    // Highlight kept edges with glow
-    const kept = links.filter(l=> keep.has(l.source) && keep.has(l.target));
-    const pos = new Float32Array(kept.length*6);
-    let j=0;
-    kept.forEach(l=>{
-      const s = nodes.find(n=>n.id===l.source);
-      const t = nodes.find(n=>n.id===l.target);
-      pos[j++]=s.x; pos[j++]=s.y; pos[j++]=s.z;
-      pos[j++]=t.x; pos[j++]=t.y; pos[j++]=t.z;
-    });
-    const glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const glowMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_HI, transparent:true, opacity:0.95 });
-    highlightLines = new THREE.LineSegments(glowGeo, glowMat);
-    scene.add(highlightLines);
   }
 
-  // Picking
-  const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2();
-  function onPointer(ev){
-    const rect = renderer.domElement.getBoundingClientRect();
-    const px = ( (ev.clientX||ev.touches?.[0].clientX) - rect.left ) / rect.width;
-    const py = ( (ev.clientY||ev.touches?.[0].clientY) - rect.top ) / rect.height;
-    mouse.x = px*2-1; mouse.y = -(py*2-1);
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(spheres.map(s=>s.mesh), true);
-    if(hits.length){ highlightDownline(hits[0].object.userData.id); }
-    else { clearHighlight(); }
-  }
-  renderer.domElement.addEventListener('click', onPointer);
-  renderer.domElement.addEventListener('touchend', onPointer);
+  // ===== Buttons =====
+  document.getElementById('modeCube').addEventListener('click', e=>{ e.preventDefault(); showCube(); });
+  document.getElementById('modeMap').addEventListener('click',  e=>{ e.preventDefault(); showMap(); });
+  document.getElementById('regen').addEventListener('click',    e=>{
+    e.preventDefault();
+    if(currentMode==='map') showMap(); else showCube();
+  });
 
-  // Build & draw
-  function reset(){
-    buildGraph();
-    placeNodes();
-    draw();
-    setSizeToContainer(); // make sure first frame sizes correctly
-  }
-  reset();
+  // ===== Start in donor map (you can click "Show Test Cube" if needed) =====
+  showMap();
 
-  // Animate
-  (function animate(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(animate) })();
-
-  // Regenerate
-  document.getElementById('regen').addEventListener('click', e=>{ e.preventDefault(); reset(); });
+  // Safety: ensure size once more after layout settles
+  setTimeout(setSizeToContainer, 500);
 })();
 </script>
 </body>
