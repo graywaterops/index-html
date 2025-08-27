@@ -3,295 +3,94 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Smart Coin® — 3D Donor Dedication Map</title>
+<title>Smart Coin® Donor Dedication Map</title>
 <style>
-  :root { --bg:#0b1020; --text:#eaf0ff; --muted:#a7b0cc; --panel:#121a36; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
-              font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-  header { padding:10px 14px; background:linear-gradient(90deg,#0f172a,#111831); border-bottom:1px solid #1f2a4d; }
-  h1 { margin:0; font-size:16px; letter-spacing:.2px; }
-  .wrap { display:grid; grid-template-columns: 320px 1fr; gap:12px; height:calc(100% - 52px); padding:12px; box-sizing:border-box; }
-  .panel { background:var(--panel); border:1px solid #1f2a4d; border-radius:12px; padding:12px; overflow:auto; }
-  .panel h2 { margin:2px 0 8px; font-size:14px; color:var(--muted); }
-  .legend { font-size:12px; line-height:1.6; }
-  .chip { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; vertical-align:middle; border:1px solid #2f3b66;}
-  #scene { width:100%; height:100%; border:1px solid #1f2a4d; border-radius:12px; position:relative; overflow:hidden; }
-  .btn { display:inline-block; padding:6px 10px; border-radius:8px; background:#2b3f89; color:#fff; font-weight:600; text-decoration:none; border:1px solid #3e57c0;}
-  .note { font-size:11px; color:#9aa3c9; margin-top:8px;}
+  html,body {margin:0;height:100%;background:#0b1020;color:#fff;font-family:sans-serif;}
+  #scene {width:100%;height:100%;}
+  #legend {
+    position:absolute;top:10px;left:10px;background:#121a36;padding:10px;border-radius:8px;
+    font-size:13px;line-height:1.4;border:1px solid #1f2a4d;
+  }
+  .chip {display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px;}
 </style>
 </head>
 <body>
-<header><h1>Smart Coin® — 3D Donor Dedication Map</h1></header>
-
-<div class="wrap">
-  <div class="panel">
-    <h2>How to read this</h2>
-    <div class="legend">
-      <div><span class="chip" style="background:#1e3a8a"></span><b>Dark blue</b>: initial top donors (e.g., 250)</div>
-      <div><span class="chip" style="background:#93c5fd"></span><b>Light blue</b>: each donor’s required “+1” supporter</div>
-      <div><span class="chip" style="background:#22c55e"></span><b>Green</b>: extras (donor finds >1)</div>
-      <div><span class="chip" style="background:#ef4444"></span><b>Red</b>: downstream seeds from extras</div>
-    </div>
-    <div class="note">
-      • Drag to rotate · Scroll/Pinch to zoom · Right-drag to pan<br/>
-      • Click any dot to highlight that donor’s <b>entire downline</b>.
-    </div>
-    <p style="margin-top:10px">
-      <a class="btn" href="#" id="regen">Regenerate</a>
-    </p>
-  </div>
-  <div class="panel"><div id="scene"></div></div>
+<div id="legend">
+  <div><span class="chip" style="background:#1e3a8a"></span> Dark blue = top donors</div>
+  <div><span class="chip" style="background:#93c5fd"></span> Light blue = +1 supporter</div>
+  <div><span class="chip" style="background:#22c55e"></span> Green = extras (&gt;1)</div>
+  <div><span class="chip" style="background:#ef4444"></span> Red = downstream seeds</div>
 </div>
+<div id="scene"></div>
 
-<!-- Only Three.js (no d3-force needed) -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
-
 <script>
 (function(){
-  // ---- Config ----
-  const INITIAL_DONORS = 250;
-  const EXTRA_PROB = 0.28;        // chance a donor makes extras
-  const EXTRAS_MIN = 1, EXTRAS_MAX = 2;
-  const RED_CHILDREN_PER_GREEN = 1;
-
-  const COLOR_DARK = 0x1e3a8a, COLOR_LIGHT = 0x93c5fd, COLOR_GREEN = 0x22c55e, COLOR_RED = 0xef4444;
-  const COLOR_EDGE_DIM = 0x5b6b95, COLOR_EDGE_HI = 0x6ee7ff;
-
-  // ---- Three.js setup ----
-  const sceneEl = document.getElementById('scene');
-  let width = sceneEl.clientWidth, height = sceneEl.clientHeight;
-
-  const renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setSize(width, height);
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+  const sceneEl=document.getElementById("scene");
+  const renderer=new THREE.WebGLRenderer({antialias:true});
   sceneEl.appendChild(renderer.domElement);
+  const scene=new THREE.Scene();
+  scene.background=new THREE.Color(0x0b1020);
+  const camera=new THREE.PerspectiveCamera(55,1,0.1,5000);
+  camera.position.set(0,200,500);
+  const controls=new THREE.OrbitControls(camera,renderer.domElement);
+  scene.add(new THREE.AmbientLight(0xffffff,0.9));
+  const dir=new THREE.DirectionalLight(0xffffff,0.5);dir.position.set(300,500,400);scene.add(dir);
 
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b1020);
+  const nodes=[],links=[],spheres=[];
+  let edgeLines;
+  const rnd=()=>Math.random();
 
-  const camera = new THREE.PerspectiveCamera(55, width/height, 0.1, 5000);
-  camera.position.set(0, 240, 600);
-
-  const controls = new THREE.OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true; controls.dampingFactor = 0.08;
-  controls.rotateSpeed = 0.6; controls.zoomSpeed = 0.9; controls.panSpeed = 0.6;
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.85));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.55); dir.position.set(300, 500, 400); scene.add(dir);
-
-  // ---- Graph data ----
-  let nodes=[], links=[];
-  const spheres=[]; // {mesh,node}
-  let edgeLines, edgeGeo, edgePos;
-  let highlightLines;
-
-  // Fibonacci sphere for nice 3D positions
-  function fibSphere(n, radius=250){
-    const pts = [];
-    const phi = Math.PI * (3 - Math.sqrt(5));
-    for(let i=0;i<n;i++){
-      const y = 1 - (i / (n - 1)) * 2;
-      const r = Math.sqrt(1 - y*y);
-      const theta = phi * i;
-      const x = Math.cos(theta) * r;
-      const z = Math.sin(theta) * r;
-      pts.push(new THREE.Vector3(x*radius, y*radius, z*radius));
-    }
-    return pts;
+  // Build graph
+  let id=0;
+  function addNode(type,parent=null){
+    const n={id:id++,type,parent,children:[]};nodes.push(n);
+    if(parent!=null){links.push({source:parent,target:n.id});nodes[parent].children.push(n.id);}
+    return n;
   }
+  for(let i=0;i<50;i++) addNode("dark"); // fewer nodes for speed
+  nodes.filter(n=>n.type==="dark").forEach(d=>{
+    addNode("light",d.id);
+    if(rnd()<0.3){const g=addNode("green",d.id);addNode("red",g.id);}
+  });
 
-  function rng(seed=Date.now()){
-    let t = seed>>>0;
-    return ()=>{ t += 0x6D2B79F5; let r = Math.imul(t ^ t>>>15, 1 | t); r ^= r + Math.imul(r ^ r>>>7, 61 | r); return ((r ^ r>>>14)>>>0) / 4294967296; };
+  // Position nodes roughly in sphere
+  nodes.forEach(n=>{
+    n.x=(rnd()*2-1)*200;
+    n.y=(rnd()*2-1)*200;
+    n.z=(rnd()*2-1)*200;
+  });
+
+  // Draw
+  function colorFor(t){return t==="dark"?0x1e3a8a:t==="light"?0x93c5fd:t==="green"?0x22c55e:0xef4444;}
+  nodes.forEach(n=>{
+    const geo=new THREE.SphereGeometry(5,16,16);
+    const mat=new THREE.MeshStandardMaterial({color:colorFor(n.type)});
+    const mesh=new THREE.Mesh(geo,mat);
+    mesh.position.set(n.x,n.y,n.z);
+    mesh.userData.id=n.id;
+    scene.add(mesh);spheres.push(mesh);
+  });
+  const pos=new Float32Array(links.length*6);
+  let i=0;links.forEach(l=>{
+    const s=nodes[l.source],t=nodes[l.target];
+    pos[i++]=s.x;pos[i++]=s.y;pos[i++]=s.z;
+    pos[i++]=t.x;pos[i++]=t.y;pos[i++]=t.z;
+  });
+  const geo=new THREE.BufferGeometry();
+  geo.setAttribute("position",new THREE.BufferAttribute(pos,3));
+  const mat=new THREE.LineBasicMaterial({color:0x5b6b95,opacity:0.35,transparent:true});
+  edgeLines=new THREE.LineSegments(geo,mat);scene.add(edgeLines);
+
+  function resize(){
+    const w=sceneEl.clientWidth,h=sceneEl.clientHeight;
+    camera.aspect=w/h;camera.updateProjectionMatrix();
+    renderer.setSize(w,h);
   }
-  const rnd = rng();
+  window.addEventListener("resize",resize);resize();
 
-  function buildGraph(){
-    nodes=[]; links=[];
-    let id = 0;
-
-    function addNode(type, parentId=null, posIndex=0){
-      const node = {id:id++, type, children:[], parent:parentId, posIndex};
-      nodes.push(node);
-      if(parentId!=null){
-        links.push({source: parentId, target: node.id});
-        const p = nodes.find(n=>n.id===parentId); if(p) p.children.push(node.id);
-      }
-      return node;
-    }
-
-    // initial donors
-    for(let i=0;i<INITIAL_DONORS;i++){ addNode('dark', null, i); }
-
-    // each dark => one light; some => extra green + red
-    for(let i=0;i<INITIAL_DONORS;i++){
-      const darkId = i;
-      addNode('light', darkId, INITIAL_DONORS + i);
-      if(rnd() < EXTRA_PROB){
-        const extras = Math.floor(rnd()*(EXTRAS_MAX-EXTRAS_MIN+1)) + EXTRAS_MIN;
-        for(let k=0;k<extras;k++){
-          const g = addNode('green', darkId);
-          addNode('red', g.id);
-        }
-      }
-    }
-
-    // each light => one more light, some => green + red
-    const lightIds = nodes.filter(n=>n.type==='light').map(n=>n.id);
-    lightIds.forEach(lid=>{
-      addNode('light', lid);
-      if(rnd() < EXTRA_PROB*0.7){
-        const g = addNode('green', lid);
-        addNode('red', g.id);
-      }
-    });
-  }
-
-  function colorFor(type){
-    if(type==='dark') return COLOR_DARK;
-    if(type==='light') return COLOR_LIGHT;
-    if(type==='green') return COLOR_GREEN;
-    return COLOR_RED;
-  }
-
-  function placeNodes(){
-    // place darks on sphere, others near their parent for legibility
-    const darkNodes = nodes.filter(n=>n.type==='dark');
-    const spherePts = fibSphere(darkNodes.length, 260);
-
-    darkNodes.forEach((n,i)=>{
-      n.x = spherePts[i].x; n.y = spherePts[i].y; n.z = spherePts[i].z;
-    });
-
-    nodes.forEach(n=>{
-      if(n.type!=='dark'){
-        const p = nodes.find(x=>x.id===n.parent);
-        const jitter = ()=> (rnd()*2-1)*30;
-        n.x = (p?.x||0) + jitter();
-        n.y = (p?.y||0) + jitter();
-        n.z = (p?.z||0) + jitter();
-      }
-    });
-  }
-
-  function draw(){
-    // clear
-    spheres.splice(0).forEach(s=>{ scene.remove(s.mesh); s.mesh.geometry.dispose(); s.mesh.material.dispose(); });
-    if(edgeLines){ scene.remove(edgeLines); edgeLines.geometry.dispose(); edgeLines.material.dispose(); edgeLines=null; }
-    if(highlightLines){ scene.remove(highlightLines); highlightLines.geometry.dispose(); highlightLines.material.dispose(); highlightLines=null; }
-
-    // nodes
-    nodes.forEach(n=>{
-      const size = n.type==='dark'? 5.2 : n.type==='light'? 4 : n.type==='green'? 4.4 : 3.8;
-      const geo = new THREE.SphereGeometry(size, 18, 18);
-      const mat = new THREE.MeshStandardMaterial({ color: colorFor(n.type), metalness:0.15, roughness:0.45 });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(n.x, n.y, n.z);
-      mesh.userData.id = n.id;
-      scene.add(mesh);
-      spheres.push({mesh, node:n});
-    });
-
-    // edges
-    edgePos = new Float32Array(links.length*6);
-    edgeGeo = new THREE.BufferGeometry();
-    edgeGeo.setAttribute('position', new THREE.BufferAttribute(edgePos,3));
-    const edgeMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_DIM, transparent:true, opacity:0.35 });
-    edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
-    scene.add(edgeLines);
-
-    let i=0;
-    links.forEach(l=>{
-      const s = nodes.find(n=>n.id===l.source);
-      const t = nodes.find(n=>n.id===l.target);
-      edgePos[i++]=s.x; edgePos[i++]=s.y; edgePos[i++]=s.z;
-      edgePos[i++]=t.x; edgePos[i++]=t.y; edgePos[i++]=t.z;
-    });
-    edgeGeo.attributes.position.needsUpdate = true;
-  }
-
-  function clearHighlight(){
-    if(highlightLines){
-      scene.remove(highlightLines);
-      highlightLines.geometry.dispose();
-      highlightLines.material.dispose();
-      highlightLines = null;
-    }
-    spheres.forEach(s=>{ s.mesh.material.opacity = 1; s.mesh.material.transparent = false; });
-    if(edgeLines) edgeLines.material.opacity = 0.35;
-  }
-
-  function highlightDownline(startId){
-    clearHighlight();
-    // BFS descendants
-    const keep = new Set([startId]);
-    const q = [startId];
-    while(q.length){
-      const cur = q.shift();
-      links.filter(l=>l.source===cur).forEach(l=>{
-        if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); }
-      });
-    }
-    // fade others
-    spheres.forEach(s=>{
-      const on = keep.has(s.node.id);
-      s.mesh.material.transparent = true;
-      s.mesh.material.opacity = on ? 1 : 0.12;
-    });
-    if(edgeLines) edgeLines.material.opacity = 0.08;
-
-    // glowing overlay
-    const kept = links.filter(l=> keep.has(l.source) && keep.has(l.target));
-    const pos = new Float32Array(kept.length*6);
-    let j=0;
-    kept.forEach(l=>{
-      const s = nodes.find(n=>n.id===l.source);
-      const t = nodes.find(n=>n.id===l.target);
-      pos[j++]=s.x; pos[j++]=s.y; pos[j++]=s.z;
-      pos[j++]=t.x; pos[j++]=t.y; pos[j++]=t.z;
-    });
-    const glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const glowMat = new THREE.LineBasicMaterial({ color: COLOR_EDGE_HI, transparent:true, opacity:0.95 });
-    highlightLines = new THREE.LineSegments(glowGeo, glowMat);
-    scene.add(highlightLines);
-  }
-
-  // picking
-  const raycaster = new THREE.Raycaster(); const mouse = new THREE.Vector2();
-  function onPointer(ev){
-    const rect = renderer.domElement.getBoundingClientRect();
-    const px = ( (ev.clientX||ev.touches?.[0].clientX) - rect.left ) / rect.width;
-    const py = ( (ev.clientY||ev.touches?.[0].clientY) - rect.top ) / rect.height;
-    mouse.x = px*2-1; mouse.y = -(py*2-1);
-    raycaster.setFromCamera(mouse, camera);
-    const hits = raycaster.intersectObjects(spheres.map(s=>s.mesh), true);
-    if(hits.length){ highlightDownline(hits[0].object.userData.id); }
-    else { clearHighlight(); }
-  }
-  renderer.domElement.addEventListener('click', onPointer);
-  renderer.domElement.addEventListener('touchend', onPointer);
-
-  // resize
-  function onResize(){
-    width = sceneEl.clientWidth; height = sceneEl.clientHeight;
-    camera.aspect = width/height; camera.updateProjectionMatrix();
-    renderer.setSize(width, height);
-  }
-  window.addEventListener('resize', onResize);
-
-  function reset(){
-    buildGraph();
-    placeNodes();
-    draw();
-  }
-  reset();
-
-  // animate
-  (function animate(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(animate); })();
-
-  // Regenerate
-  document.getElementById('regen').addEventListener('click', e=>{ e.preventDefault(); reset(); });
+  (function animate(){controls.update();renderer.render(scene,camera);requestAnimationFrame(animate)})();
 })();
 </script>
 </body>
