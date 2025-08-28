@@ -5,10 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Smart Coin® — 3D Donor Dedication Map</title>
 <style>
-  /* Light theme */
+  /* Dark theme */
   :root{
-    --bg:#ffffff; --panel:#f8fafc; --text:#111827; --muted:#4b5563;
-    --border:#e5e7eb;
+    --bg:#000000; --panel:#121a36; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d;
   }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -23,33 +22,35 @@
   #legend{
     position:fixed;left:10px;top:10px;z-index:10;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:8px 10px;
-    font-size:12px;color:#374151
+    font-size:12px;color:#cfe1ff
   }
   .chip{display:inline-block;width:10px;height:10px;border-radius:50%;
-    margin-right:6px;vertical-align:middle;border:1px solid #cbd5e1}
+    margin-right:6px;vertical-align:middle;border:1px solid #2f3b66}
 
   /* Controls panel (top-right) */
   #ui{
     position:fixed;right:10px;top:10px;z-index:11;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:10px 12px;
-    font-size:12px;color:#111827;min-width:260px;max-width:42ch
+    font-size:12px;color:#eaf0ff;min-width:260px;max-width:42ch
   }
   #ui h3{margin:0 0 8px 0;font-size:13px}
-  #ui h4{margin:12px 0 6px 0;font-size:12px;color:#374151}
+  #ui h4{margin:12px 0 6px 0;font-size:12px;color:#cfe1ff}
   #ui .row{display:flex;align-items:center;gap:8px;margin:8px 0}
-  #ui label{width:130px}
+  #ui label{width:140px}
   #ui input[type="range"]{flex:1}
   #ui output{width:46px;text-align:right;display:inline-block}
   #ui .btns{display:flex;gap:8px;margin-top:8px}
   #ui button{
-    cursor:pointer;border:1px solid var(--border);background:#fff;border-radius:6px;
+    cursor:pointer;border:1px solid var(--border);background:#0b1020;color:#eaf0ff;border-radius:6px;
     padding:6px 10px;font-size:12px
   }
   #metrics{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;line-height:1.4}
   #metrics b{font-weight:600}
+  /* Range thumb for dark UI (optional nice-to-have) */
+  input[type="range"]{accent-color:#6ee7ff}
 </style>
 
-<!-- Import-map shim (for Safari/older Chromium) -->
+<!-- Import-map shim (Safari/older Chromium) -->
 <script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 
 <!-- Import map -->
@@ -71,6 +72,7 @@
   <div><span class="chip" style="background:#93c5fd"></span>Light blue: +1 chain</div>
   <div><span class="chip" style="background:#22c55e"></span>Green: extra branch</div>
   <div><span class="chip" style="background:#ef4444"></span>Red: downstream from extras</div>
+  <div style="margin-top:6px"><span class="chip" style="background:#06b6d4"></span>Highlight: descendants &nbsp; <span class="chip" style="background:#f59e0b"></span>Highlight: ancestor path</div>
 </div>
 
 <!-- Control panel -->
@@ -85,8 +87,8 @@
   <h4>+1 Chain (light blue)</h4>
   <div class="row">
     <label for="plusDepth">Max +1 depth</label>
-    <input id="plusDepth" type="range" min="1" max="20" value="6">
-    <output id="plusDepthOut">6</output>
+    <input id="plusDepth" type="range" min="1" max="40" value="8">
+    <output id="plusDepthOut">8</output>
   </div>
   <div class="row">
     <label for="plusProb">Continue prob.</label>
@@ -102,8 +104,8 @@
   </div>
   <div class="row">
     <label for="extraDepth">Max extra depth</label>
-    <input id="extraDepth" type="range" min="0" max="12" value="3">
-    <output id="extraDepthOut">3</output>
+    <input id="extraDepth" type="range" min="0" max="24" value="6">
+    <output id="extraDepthOut">6</output>
   </div>
   <div class="row">
     <label for="extraProb">Extra continue</label>
@@ -114,17 +116,28 @@
   <h4>Layout</h4>
   <div class="row">
     <label for="radius">Sphere radius</label>
-    <input id="radius" type="range" min="100" max="800" value="260">
-    <output id="radiusOut">260</output>
+    <input id="radius" type="range" min="100" max="1000" value="320">
+    <output id="radiusOut">320</output>
   </div>
   <div class="row">
     <label for="jitter">Child jitter</label>
-    <input id="jitter" type="range" min="2" max="80" value="28">
-    <output id="jitterOut">28</output>
+    <input id="jitter" type="range" min="2" max="120" value="32">
+    <output id="jitterOut">32</output>
   </div>
   <div class="row">
     <label for="seed">Seed</label>
     <input id="seed" type="text" placeholder="random" style="flex:1" />
+  </div>
+
+  <h4>Highlight options</h4>
+  <div class="row">
+    <label for="showAnc">Show ancestors</label>
+    <input id="showAnc" type="checkbox" checked />
+  </div>
+  <div class="row">
+    <label for="ancCap">Ancestor depth cap</label>
+    <input id="ancCap" type="range" min="0" max="50" value="0">
+    <output id="ancCapOut">∞</output>
   </div>
 
   <div class="row">
@@ -158,15 +171,15 @@ try {
   // ---- renderer/scene/camera ----
   const renderer = new THREE.WebGLRenderer({ antialias:true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
-  renderer.domElement.style.touchAction = 'none'; // better pointer handling
+  renderer.domElement.style.touchAction = 'none';
   root.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xffffff); // white background
+  scene.background = new THREE.Color(0x000000); // black background
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
   function resetView(){
-    camera.position.set(0, 0, 600);
+    camera.position.set(0, 0, 680);
     controls.target.set(0, 0, 0);
     controls.update();
   }
@@ -175,7 +188,7 @@ try {
   controls.enableDamping = true; controls.dampingFactor = 0.05;
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(300,500,400); scene.add(dir);
+  const dir = new THREE.DirectionalLight(0xffffff, 0.55); dir.position.set(300,500,400); scene.add(dir);
 
   function sizeOf(el){
     const w = el.clientWidth || el.parentElement?.clientWidth || window.innerWidth;
@@ -192,7 +205,8 @@ try {
 
   // ---- interactive state ----
   const state = {
-    group:null, nodes:[], links:[], spheres:[], edges:null, glow:null,
+    group:null, nodes:[], links:[], spheres:[], edges:null,
+    glowDesc:null, glowAnc:null, rootWire:null,
     levels:[], roots:[]
   };
 
@@ -215,21 +229,28 @@ try {
       }
     });
   }
+  function clearHi(){
+    if(state.glowDesc){ state.group.remove(state.glowDesc); dispose(state.glowDesc); state.glowDesc=null; }
+    if(state.glowAnc){ state.group.remove(state.glowAnc); dispose(state.glowAnc); state.glowAnc=null; }
+    if(state.rootWire){ state.group.remove(state.rootWire); dispose(state.rootWire); state.rootWire=null; }
+    state.spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
+    if(state.edges) state.edges.material.opacity=0.35;
+  }
 
   // build / rebuild graph
   function buildGraph(params){
     const {
       initialDonors=80,
-      plusDepth=6, plusProb=0.8,
-      extraProbRoot=0.3, extraDepth=3, extraContProb=0.75,
-      sphereRadius=260, childJitter=28, seed=''
+      plusDepth=8, plusProb=0.8,
+      extraProbRoot=0.3, extraDepth=6, extraContProb=0.75,
+      sphereRadius=320, childJitter=32, seed=''
     } = params;
 
     // clean previous
     if(state.group){ scene.remove(state.group); dispose(state.group); }
     state.group = new THREE.Group(); scene.add(state.group);
     state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[];
-    if(state.glow){ scene.remove(state.glow); dispose(state.glow); state.glow=null; }
+    clearHi();
 
     const rand = makeRNG(seed);
 
@@ -250,18 +271,17 @@ try {
     // roots
     for(let i=0;i<initialDonors;i++){ const r = addNode('dark', null); state.roots.push(r.id); }
 
-    // per-root structures
+    // helper to grow linear chains
     function growChain(startId, nodeType, maxDepth, contProb){
-      let depth=0, parentId=startId, lastId=null;
+      let depth=0, parentId=startId;
       while(depth < maxDepth && rand() < contProb){
         const child = addNode(nodeType, parentId);
-        lastId = child.id;
         parentId = child.id;
         depth++;
       }
-      return lastId;
     }
 
+    // per-root growth
     for(let r=0;r<initialDonors;r++){
       // +1 chain
       const first = addNode('light', r);
@@ -274,7 +294,7 @@ try {
       }
     }
 
-    // layout: fibonacci sphere for roots; children near parent
+    // layout
     function fibSphere(n,r=sphereRadius){
       const pts=[], phi=Math.PI*(3-Math.sqrt(5));
       for(let i=0;i<n;i++){
@@ -318,7 +338,7 @@ try {
     state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE,transparent:true,opacity:0.35}));
     state.group.add(state.edges);
 
-    // compute levels (depth from root) and metrics
+    // metrics
     computeLevelsAndMetrics();
     updateMetricsUI();
   }
@@ -343,7 +363,6 @@ try {
     state.leafCount = state.nodes.filter(n=>n.children.length===0).length;
     state.avgChildrenAtRoot = state.roots.reduce((acc,r)=>acc+state.nodes[r].children.length,0)/Math.max(1,state.roots.length);
 
-    // longest +1 chain (light) from any root
     function lightChainLenFrom(rootId){
       const firstLight = state.nodes[rootId].children.map(id=>state.nodes[id]).find(n=>n.type==='light');
       if(!firstLight) return 0;
@@ -357,7 +376,31 @@ try {
     state.longestLightChain = state.roots.reduce((m,r)=>Math.max(m, lightChainLenFrom(r)), 0);
   }
 
-  // highlight logic (click/tap) — robust click detection (no accidental drags)
+  // helpers for ancestry
+  function rootOf(id){
+    let cur = id, steps=0;
+    while(state.nodes[cur].parent!=null){ cur = state.nodes[cur].parent; steps++; }
+    return {root:cur, steps};
+  }
+  function buildAncestorPathLines(startId, cap){ // cap 0 => unlimited
+    const maxSegs = (cap===0)? 1e9 : cap;
+    let child = startId, segs = [];
+    let used = 0;
+    while(state.nodes[child].parent!=null && used < maxSegs){
+      const parent = state.nodes[child].parent;
+      segs.push([parent, child]);
+      child = parent;
+      used++;
+    }
+    const gpos=new Float32Array(segs.length*6); let i=0;
+    segs.forEach(([a,b])=>{
+      const s=state.nodes[a], t=state.nodes[b];
+      gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z;
+    });
+    return {positions:gpos, segCount:segs.length};
+  }
+
+  // highlight logic (click/tap)
   const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
   let down={x:0,y:0}, moved=false;
   renderer.domElement.addEventListener('pointerdown', (ev)=>{ down.x=ev.clientX; down.y=ev.clientY; moved=false; });
@@ -365,7 +408,7 @@ try {
     if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y) > 6) moved=true;
   });
   renderer.domElement.addEventListener('pointerup', (ev)=>{
-    if(moved) return; // treat as drag, not click
+    if(moved) return;
     const rect=renderer.domElement.getBoundingClientRect();
     const px=(ev.clientX-rect.left)/rect.width;
     const py=(ev.clientY-rect.top)/rect.height;
@@ -373,50 +416,75 @@ try {
     ray.setFromCamera(mouse,camera);
     const hits=ray.intersectObjects(state.spheres,true);
     if(hits.length){ const id=hits[0].object.userData.id; highlight(id); }
-    else { clearHi(); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); }
+    else { clearHi(); setStatus('donor map ready — rotate/zoom, click/tap to explore'); }
   }, {passive:true});
-
-  function clearHi(){
-    if(state.glow){ state.group.remove(state.glow); dispose(state.glow); state.glow=null; }
-    state.spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
-    if(state.edges) state.edges.material.opacity=0.35;
-  }
 
   function highlight(startId){
     clearHi();
-    // BFS from clicked node to get subtree + levels
-    const keep=new Set([startId]), q=[{id:startId, lvl:0}];
-    const perLevelCounts = [];
+
+    // --- descendants (BFS) ---
+    const keepDesc=new Set([startId]), q=[{id:startId, lvl:0}], perLevel=[];
     while(q.length){
       const {id,lvl} = q.shift();
-      perLevelCounts[lvl] = (perLevelCounts[lvl]||0)+1;
+      perLevel[lvl] = (perLevel[lvl]||0)+1;
       state.nodes[id].children.forEach(ch=>{
-        if(!keep.has(ch)){ keep.add(ch); q.push({id:ch,lvl:lvl+1}); }
+        if(!keepDesc.has(ch)){ keepDesc.add(ch); q.push({id:ch,lvl:lvl+1}); }
       });
     }
-    const depth = perLevelCounts.length-1;
-    const subtreeSize = keep.size;
-    const leaves = [...keep].filter(i=> state.nodes[i].children.length===0).length;
 
-    // dim others
+    // --- ancestors (path to root) ---
+    const showAnc = document.getElementById('showAnc').checked;
+    const ancCap = parseInt(document.getElementById('ancCap').value || '0', 10); // 0=∞
+    const {root:rootId, steps:stepsToRoot} = rootOf(startId);
+    const keepAnc = new Set();
+    if(showAnc){
+      let cur = startId; let used=0;
+      while(state.nodes[cur].parent!=null && (ancCap===0 || used<ancCap)){
+        const p = state.nodes[cur].parent;
+        keepAnc.add(p); cur = p; used++;
+      }
+    }
+
+    // dim others, keep descendants + ancestors bright
+    const keepAll = new Set([...keepDesc, ...keepAnc]);
     state.spheres.forEach(m=>{
-      const on=keep.has(m.userData.id);
-      m.material.transparent=true; m.material.opacity=on?1:0.12;
+      const on = keepAll.has(m.userData.id);
+      m.material.transparent = true;
+      m.material.opacity = on ? 1 : 0.12;
     });
     if(state.edges) state.edges.material.opacity=0.08;
 
-    // bright lines for kept links
-    const kept=state.links.filter(l=> keep.has(l.source)&&keep.has(l.target));
-    const gpos=new Float32Array(kept.length*6); let i=0;
-    kept.forEach(l=>{
+    // bright lines: descendants (cyan)
+    const keptLinks = state.links.filter(l=> keepDesc.has(l.source) && keepDesc.has(l.target));
+    const dpos=new Float32Array(keptLinks.length*6); let i=0;
+    keptLinks.forEach(l=>{
       const s=state.nodes[l.source], t=state.nodes[l.target];
-      gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z;
+      dpos[i++]=s.x; dpos[i++]=s.y; dpos[i++]=s.z; dpos[i++]=t.x; dpos[i++]=t.y; dpos[i++]=t.z;
     });
-    const ggeo=new THREE.BufferGeometry(); ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
-    state.glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:0x06b6d4, transparent:true, opacity:0.95}));
-    state.group.add(state.glow);
+    const dgeo=new THREE.BufferGeometry(); dgeo.setAttribute('position', new THREE.BufferAttribute(dpos,3));
+    state.glowDesc=new THREE.LineSegments(dgeo, new THREE.LineBasicMaterial({color:0x06b6d4, transparent:true, opacity:0.95}));
+    state.group.add(state.glowDesc);
 
-    setStatus(`selected donor #${startId} — subtree size ${subtreeSize}, depth ${depth}, leaves ${leaves}; levels: ${perLevelCounts.map((n,i)=>i+':'+n).join('  ')}`);
+    // bright lines: ancestor path (gold)
+    if(showAnc){
+      const {positions:apos, segCount} = buildAncestorPathLines(startId, ancCap);
+      if(segCount>0){
+        const ageo=new THREE.BufferGeometry(); ageo.setAttribute('position', new THREE.BufferAttribute(apos,3));
+        state.glowAnc=new THREE.LineSegments(ageo, new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.95}));
+        state.group.add(state.glowAnc);
+      }
+      // ring the true root
+      const r = state.nodes[rootId];
+      const wire = new THREE.WireframeGeometry(new THREE.SphereGeometry(6.6, 10, 8));
+      state.rootWire = new THREE.LineSegments(wire, new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85}));
+      state.rootWire.position.set(r.x, r.y, r.z);
+      state.group.add(state.rootWire);
+    }
+
+    const subtreeSize = keepDesc.size;
+    const depthDesc = perLevel.length-1;
+    const leavesDesc = [...keepDesc].filter(i=> state.nodes[i].children.length===0).length;
+    setStatus(`selected #${startId} — descendants: size ${subtreeSize}, depth ${depthDesc}, leaves ${leavesDesc} | steps to root: ${stepsToRoot}${(ancCap>0&&stepsToRoot>ancCap)?' (showing '+ancCap+')':''}`);
   }
 
   // animation loop
@@ -434,6 +502,7 @@ try {
   const radius=$('radius'), radiusOut=$('radiusOut');
   const jitter=$('jitter'), jitterOut=$('jitterOut');
   const seed=$('seed'), auto=$('auto');
+  const showAnc=$('showAnc'), ancCap=$('ancCap'), ancCapOut=$('ancCapOut');
   const rebuildBtn=$('rebuildBtn'), resetViewBtn=$('resetViewBtn'), clearHiBtn=$('clearHiBtn');
   const metricsDiv = $('metrics');
 
@@ -446,6 +515,7 @@ try {
     extraProbOut.textContent=Number(extraProb.value).toFixed(2);
     radiusOut.textContent=radius.value;
     jitterOut.textContent=jitter.value;
+    ancCapOut.textContent = (parseInt(ancCap.value,10)===0) ? '∞' : ancCap.value;
   }
   function getParams(){
     return {
@@ -474,7 +544,7 @@ try {
     };
     metricsDiv.innerHTML =
       `<div><b>Roots:</b> ${m.roots} &nbsp; <b>Nodes:</b> ${m.nodes} &nbsp; <b>Links:</b> ${m.links}</div>
-       <div><b>Max depth:</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leaves}</div>
+       <div><b>Max depth (global):</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leaves}</div>
        <div><b>Avg children/root:</b> ${m.avgChildrenAtRoot.toFixed(2)} &nbsp; <b>Longest +1 chain:</b> ${m.longestLightChain}</div>`;
   }
 
@@ -482,24 +552,29 @@ try {
   function scheduleRebuild(){
     if(!auto.checked) return;
     clearTimeout(debounceTimer);
-    debounceTimer=setTimeout(()=>{ setStatus('rebuilding…'); buildGraph(getParams()); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); }, 150);
+    debounceTimer=setTimeout(()=>{ setStatus('rebuilding…'); buildGraph(getParams()); setStatus('donor map ready — rotate/zoom, click/tap to explore'); }, 150);
   }
 
   [donors,plusDepth,plusProb,extra,extraDepth,extraProb,radius,jitter,seed].forEach(el=>{
     el.addEventListener('input', ()=>{ syncOutputs(); scheduleRebuild(); });
     el.addEventListener('change', ()=>{ syncOutputs(); scheduleRebuild(); });
   });
+  [showAnc, ancCap].forEach(el=>{
+    el.addEventListener('input', ()=> syncOutputs());
+    el.addEventListener('change', ()=> syncOutputs());
+  });
+
   rebuildBtn.addEventListener('click', ()=>{
     setStatus('rebuilding…'); buildGraph(getParams());
-    setStatus('donor map ready — rotate/zoom, tap/click to highlight');
+    setStatus('donor map ready — rotate/zoom, click/tap to explore');
   });
   resetViewBtn.addEventListener('click', ()=> resetView());
-  clearHiBtn.addEventListener('click', ()=> { clearHi(); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); });
+  clearHiBtn.addEventListener('click', ()=> { clearHi(); setStatus('donor map ready — rotate/zoom, click/tap to explore'); });
 
   // initial build
   syncOutputs();
   buildGraph(getParams());
-  setStatus('donor map ready — rotate/zoom, tap/click to highlight');
+  setStatus('donor map ready — rotate/zoom, click/tap to explore');
 
 } catch(err) {
   showError(err);
