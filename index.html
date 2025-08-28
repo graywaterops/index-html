@@ -7,11 +7,11 @@
 <style>
   :root{--bg:#0b1020;--panel:#121a36;--text:#eaf0ff;--muted:#9aa3c9}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  #app{position:relative;width:100%;height:100%}
+  #app{position:relative;width:100%;height:100vh;min-height:560px}
   #status{
     position:fixed;left:10px;bottom:10px;z-index:10;
     background:var(--panel);color:var(--muted);border:1px solid #1f2a4d;border-radius:8px;
-    padding:6px 10px;font-size:12px;max-width:70vw;white-space:pre-wrap
+    padding:6px 10px;font-size:12px;max-width:80vw;white-space:pre-wrap
   }
   #legend{
     position:fixed;left:10px;top:10px;z-index:10;background:var(--panel);
@@ -19,7 +19,15 @@
   }
   .chip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;border:1px solid #2f3b66}
 </style>
+
+<!-- Load Three.js (global) with a jsDelivr fallback -->
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js" crossorigin="anonymous"
+        onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js'"></script>
+<!-- Load OrbitControls (global) with a jsDelivr fallback -->
+<script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js" crossorigin="anonymous"
+        onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js'"></script>
 </head>
+
 <body>
 <div id="app"></div>
 
@@ -31,145 +39,220 @@
 </div>
 <div id="status">Status: loading…</div>
 
-<!-- ES modules (OrbitControls imported from jsm path) -->
-<script type="module">
-import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
-import { OrbitControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+<script>
+(function(){
+  const statusEl = document.getElementById('status');
+  const setStatus = (m)=> statusEl.textContent = 'Status: ' + m;
+  const showError = (e)=>{ setStatus('Error: ' + (e && e.message || e)); console.error(e); };
 
-const statusEl = document.getElementById('status');
-const setStatus = (m)=> statusEl.textContent = 'Status: ' + m;
-const showError = (e)=>{ setStatus('Error: ' + (e?.message||e)); console.error(e); };
+  try{
+    setStatus('initializing 3D…');
 
-try{
-  const root = document.getElementById('app');
-  const renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
-  root.appendChild(renderer.domElement);
-
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0b1020);
-
-  const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
-  camera.position.set(0, 0, 600);
-
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-
-  scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.5); dir.position.set(300,500,400); scene.add(dir);
-
-  function resize(){
-    const w = root.clientWidth || root.parentElement?.clientWidth || window.innerWidth;
-    const h = root.clientHeight || root.parentElement?.clientHeight || Math.round(window.innerHeight*0.7);
-    camera.aspect = w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h);
-  }
-  window.addEventListener('resize', resize);
-  setTimeout(resize, 30); setTimeout(resize, 250);
-  if ('ResizeObserver' in window) new ResizeObserver(resize).observe(root);
-
-  // ---- Phase 1: test cube (sanity) ----
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(120,120,120),
-    new THREE.MeshStandardMaterial({ color: 0x00ff66 })
-  );
-  scene.add(cube);
-  let animId = 0;
-  function cubeLoop(){ cube.rotation.x+=0.01; cube.rotation.y+=0.015; controls.update(); renderer.render(scene,camera); animId=requestAnimationFrame(cubeLoop); }
-  setStatus('rendering test cube…'); cubeLoop();
-
-  // ---- Phase 2: donor map after 1s ----
-  setTimeout(()=>{
-    cancelAnimationFrame(animId);
-    scene.remove(cube); cube.geometry.dispose(); cube.material.dispose();
-    drawDonorMap().catch(showError);
-  }, 1000);
-
-  async function drawDonorMap(){
-    setStatus('building donor map…');
-
-    const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444;
-    const COLOR_EDGE=0x5b6b95, COLOR_HI=0x6ee7ff;
-    const INITIAL_DONORS=80, EXTRA_PROB=0.3;
-
-    const nodes=[], links=[];
-    let id=0;
-    function addNode(type,parent=null){ const n={id:id++,type,parent,children:[]}; nodes.push(n); if(parent!=null){ links.push({source:parent,target:n.id}); nodes[parent].children.push(n.id);} return n; }
-    // dark seeds
-    for(let i=0;i<INITIAL_DONORS;i++) addNode('dark', null);
-    // each dark -> one light; some -> green + red
-    for(let i=0;i<INITIAL_DONORS;i++){
-      const d=i;
-      addNode('light', d);
-      if(Math.random() < EXTRA_PROB){ const g=addNode('green', d); addNode('red', g.id); }
+    if (!window.THREE || !THREE.WebGLRenderer) {
+      throw new Error('Three.js failed to load. Check your network or CDN.');
     }
-    // each light -> one more light
-    nodes.filter(n=>n.type==='light').forEach(l => addNode('light', l.id));
 
-    // position: fibonacci sphere for dark; children near parent
-    function fibSphere(n,r=260){ const pts=[],phi=Math.PI*(3-Math.sqrt(5)); for(let i=0;i<n;i++){ const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i; pts.push(new THREE.Vector3(Math.cos(th)*rad*r, y*r, Math.sin(th)*rad*r)); } return pts; }
-    const dark = nodes.filter(n=>n.type==='dark'), pts = fibSphere(dark.length, 260);
-    dark.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
-    nodes.forEach(n=>{
-      if(n.type!=='dark'){
-        const p = nodes.find(x=>x.id===n.parent) || {x:0,y:0,z:0};
-        const j = ()=> (Math.random()*2-1)*28;
-        n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
+    const root = document.getElementById('app');
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+    root.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0b1020);
+
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
+    camera.position.set(0, 0, 600);
+
+    // OrbitControls from global THREE build
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(300,500,400);
+    scene.add(dir);
+
+    function sizeOf(el){
+      const w = el.clientWidth || el.parentElement?.clientWidth || window.innerWidth;
+      const h = el.clientHeight || el.parentElement?.clientHeight || Math.round(window.innerHeight*0.7);
+      return {w: Math.max(1,w), h: Math.max(1,h)}; // avoid 0x0 canvas
+    }
+    function resize(){
+      const {w,h} = sizeOf(root);
+      camera.aspect = w/h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w,h,false);
+    }
+    window.addEventListener('resize', resize);
+    if ('ResizeObserver' in window) new ResizeObserver(resize).observe(root);
+    resize();
+
+    // --- Phase 1: show cube for 1s (sanity) ---
+    const cube = new THREE.Mesh(
+      new THREE.BoxGeometry(120,120,120),
+      new THREE.MeshStandardMaterial({ color: 0x00ff66 })
+    );
+    scene.add(cube);
+
+    let animId = 0;
+    function cubeLoop(){
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.015;
+      controls.update();
+      renderer.render(scene, camera);
+      animId = requestAnimationFrame(cubeLoop);
+    }
+    setStatus('rendering test cube…');
+    cubeLoop();
+
+    // After 1s, switch to donor map
+    setTimeout(()=>{
+      cancelAnimationFrame(animId);
+      scene.remove(cube);
+      cube.geometry.dispose();
+      cube.material.dispose();
+      drawDonorMap({ THREE, scene, camera, controls, renderer, resize, setStatus, showError });
+    }, 1000);
+
+  } catch (err) {
+    showError(err);
+  }
+
+  // ----- Donor map -----
+  function drawDonorMap({ THREE, scene, camera, controls, renderer, resize, setStatus, showError }) {
+    try {
+      setStatus('building donor map…');
+
+      const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444;
+      const COLOR_EDGE=0x5b6b95;
+
+      const INITIAL_DONORS=80, EXTRA_PROB=0.3;
+
+      const nodes=[], links=[]; let id=0;
+      function addNode(type,parent=null){
+        const n={id:id++,type,parent,children:[]};
+        nodes.push(n);
+        if(parent!=null){
+          links.push({source:parent,target:n.id});
+          nodes[parent].children.push(n.id);
+        }
+        return n;
       }
-    });
 
-    // draw nodes
-    const spheres=[];
-    const col = (t)=> t==='dark'?COLOR_DARK : t==='light'?COLOR_LIGHT : t==='green'?COLOR_GREEN : COLOR_RED;
-    nodes.forEach(n=>{
-      const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
-      const mesh = new THREE.Mesh(new THREE.SphereGeometry(size,18,18), new THREE.MeshStandardMaterial({color:col(n.type),metalness:0.15,roughness:0.45}));
-      mesh.position.set(n.x,n.y,n.z); mesh.userData.id=n.id;
-      scene.add(mesh); spheres.push(mesh);
-    });
+      // dark seeds
+      for(let i=0;i<INITIAL_DONORS;i++) addNode('dark', null);
 
-    // draw edges
-    const pos = new Float32Array(links.length*6); let k=0;
-    links.forEach(l=>{ const s=nodes.find(n=>n.id===l.source), t=nodes.find(n=>n.id===l.target);
-      pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z; });
-    const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    const edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x5b6b95,transparent:true,opacity:0.35}));
-    scene.add(edges);
+      // each dark -> one light; some -> green + red
+      for(let i=0;i<INITIAL_DONORS;i++){
+        const d=i; addNode('light', d);
+        if(Math.random() < EXTRA_PROB){ const g=addNode('green', d); addNode('red', g.id); }
+      }
+      // each light -> one more light
+      nodes.filter(n=>n.type==='light').forEach(l => addNode('light', l.id));
 
-    // click-to-highlight downline
-    let glow=null; const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
-    function clearHi(){ if(glow){ scene.remove(glow); glow.geometry.dispose(); glow.material.dispose(); glow=null; } spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; }); edges.material.opacity=0.35; }
-    function highlight(startId){
-      clearHi();
-      const keep=new Set([startId]), q=[startId];
-      while(q.length){ const cur=q.shift(); links.filter(l=>l.source===cur).forEach(l=>{ if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); } }); }
-      spheres.forEach(m=>{ const on=keep.has(m.userData.id); m.material.transparent=true; m.material.opacity=on?1:0.12; });
-      edges.material.opacity=0.08;
+      // place: fibonacci sphere for darks; children near parent
+      function fibSphere(n,r=260){
+        const pts=[], phi=Math.PI*(3-Math.sqrt(5));
+        for(let i=0;i<n;i++){
+          const y=1-(i/Math.max(1,n-1))*2;
+          const rad=Math.sqrt(Math.max(0,1-y*y));
+          const th=phi*i;
+          pts.push(new THREE.Vector3(Math.cos(th)*rad*r, y*r, Math.sin(th)*rad*r));
+        }
+        return pts;
+      }
+      const dark = nodes.filter(n=>n.type==='dark'), pts = fibSphere(dark.length, 260);
+      dark.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
+      nodes.forEach(n=>{
+        if(n.type!=='dark'){
+          const p = nodes.find(x=>x.id===n.parent) || {x:0,y:0,z:0};
+          const j = ()=> (Math.random()*2-1)*28;
+          n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
+        }
+      });
 
-      const kept=links.filter(l=> keep.has(l.source)&&keep.has(l.target));
-      const gpos=new Float32Array(kept.length*6); let i=0;
-      kept.forEach(l=>{ const s=nodes.find(n=>n.id===l.source), t=nodes.find(n=>n.id===l.target);
-        gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z; });
-      const ggeo=new THREE.BufferGeometry(); ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
-      glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:0x6ee7ff, transparent:true, opacity:0.95}));
-      scene.add(glow);
+      // draw nodes
+      const spheres=[];
+      const col = (t)=> t==='dark'?COLOR_DARK : t==='light'?COLOR_LIGHT : t==='green'?COLOR_GREEN : COLOR_RED;
+      nodes.forEach(n=>{
+        const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(size,18,18),
+          new THREE.MeshStandardMaterial({color:col(n.type),metalness:0.15,roughness:0.45})
+        );
+        mesh.position.set(n.x,n.y,n.z);
+        mesh.userData.id=n.id;
+        scene.add(mesh);
+        spheres.push(mesh);
+      });
+
+      // draw edges
+      const pos = new Float32Array(links.length*6); let k=0;
+      links.forEach(l=>{
+        const s=nodes.find(n=>n.id===l.source), t=nodes.find(n=>n.id===l.target);
+        pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;
+      });
+      const edgeGeo=new THREE.BufferGeometry();
+      edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+      const edges=new THREE.LineSegments(
+        edgeGeo,
+        new THREE.LineBasicMaterial({color:COLOR_EDGE,transparent:true,opacity:0.35})
+      );
+      scene.add(edges);
+
+      // click/touch to highlight downline
+      let glow=null; const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+      function clearHi(){
+        if(glow){ scene.remove(glow); glow.geometry.dispose(); glow.material.dispose(); glow=null; }
+        spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
+        edges.material.opacity=0.35;
+      }
+      function highlight(startId){
+        clearHi();
+        const keep=new Set([startId]), q=[startId];
+        while(q.length){
+          const cur=q.shift();
+          links.filter(l=>l.source===cur).forEach(l=>{
+            if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); }
+          });
+        }
+        spheres.forEach(m=>{ const on=keep.has(m.userData.id); m.material.transparent=true; m.material.opacity=on?1:0.12; });
+        edges.material.opacity=0.08;
+
+        const kept=links.filter(l=> keep.has(l.source)&&keep.has(l.target));
+        const gpos=new Float32Array(kept.length*6); let i=0;
+        kept.forEach(l=>{
+          const s=nodes.find(n=>n.id===l.source), t=nodes.find(n=>n.id===l.target);
+          gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z;
+        });
+        const ggeo=new THREE.BufferGeometry();
+        ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
+        glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:0x6ee7ff, transparent:true, opacity:0.95}));
+        scene.add(glow);
+      }
+      function onPointer(ev){
+        const rect=renderer.domElement.getBoundingClientRect();
+        const touch = ev.changedTouches?.[0] || ev.touches?.[0] || ev;
+        const px=(touch.clientX-rect.left)/rect.width;
+        const py=(touch.clientY-rect.top)/rect.height;
+        mouse.x=px*2-1; mouse.y=-(py*2-1);
+        ray.setFromCamera(mouse,camera);
+        const hits=ray.intersectObjects(spheres,true);
+        if(hits.length){ highlight(hits[0].object.userData.id); } else { clearHi(); }
+      }
+      renderer.domElement.addEventListener('click', onPointer);
+      renderer.domElement.addEventListener('touchend', onPointer, {passive:true});
+
+      function loop(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop); }
+      resize();
+      setStatus('donor map ready — rotate/zoom, click/tap to highlight downline');
+      loop();
+
+    } catch (err) {
+      showError(err);
     }
-    function onPointer(ev){
-      const rect=renderer.domElement.getBoundingClientRect();
-      const px=((ev.clientX||ev.touches?.[0]?.clientX)-rect.left)/rect.width;
-      const py=((ev.clientY||ev.touches?.[0]?.clientY)-rect.top)/rect.height;
-      mouse.x=px*2-1; mouse.y=-(py*2-1);
-      ray.setFromCamera(mouse,camera);
-      const hits=ray.intersectObjects(spheres,true);
-      if(hits.length){ highlight(hits[0].object.userData.id); } else { clearHi(); }
-    }
-    renderer.domElement.addEventListener('click', onPointer);
-    renderer.domElement.addEventListener('touchend', onPointer);
-
-    function loop(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop); }
-    resize(); setStatus('donor map ready — rotate/zoom, click to highlight downline'); loop();
   }
-
-}catch(err){ showError(err); }
+})();
 </script>
 </body>
 </html>
