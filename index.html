@@ -11,7 +11,7 @@
   }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  #app{position:relative;width:100%;height:100vh;min-height:560px}
+  #app{position:relative;width:100%;height:100vh;min-height:560px;background:#000}
 
   #status{
     position:fixed;left:10px;bottom:10px;z-index:10;
@@ -31,14 +31,14 @@
   #ui{
     position:fixed;right:10px;top:10px;z-index:11;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:10px 12px;
-    font-size:12px;color:#eaf0ff;min-width:260px;max-width:42ch
+    font-size:12px;color:#eaf0ff;min-width:280px;max-width:46ch
   }
   #ui h3{margin:0 0 8px 0;font-size:13px}
   #ui h4{margin:12px 0 6px 0;font-size:12px;color:#cfe1ff}
   #ui .row{display:flex;align-items:center;gap:8px;margin:8px 0}
-  #ui label{width:140px}
+  #ui label{width:150px}
   #ui input[type="range"]{flex:1}
-  #ui output{width:46px;text-align:right;display:inline-block}
+  #ui output{width:52px;text-align:right;display:inline-block}
   #ui .btns{display:flex;gap:8px;margin-top:8px}
   #ui button{
     cursor:pointer;border:1px solid var(--border);background:#0b1020;color:#eaf0ff;border-radius:6px;
@@ -46,14 +46,10 @@
   }
   #metrics{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;line-height:1.4}
   #metrics b{font-weight:600}
-  /* Range thumb for dark UI (optional nice-to-have) */
   input[type="range"]{accent-color:#6ee7ff}
 </style>
 
-<!-- Import-map shim (Safari/older Chromium) -->
 <script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
-
-<!-- Import map -->
 <script type="importmap">
 {
   "imports": {
@@ -69,8 +65,8 @@
 
 <div id="legend">
   <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: initial donors (roots)</div>
-  <div><span class="chip" style="background:#93c5fd"></span>Light blue: +1 chain</div>
-  <div><span class="chip" style="background:#22c55e"></span>Green: extra branch</div>
+  <div><span class="chip" style="background:#93c5fd"></span>Light blue: referrals (+1 branching)</div>
+  <div><span class="chip" style="background:#22c55e"></span>Green: extra branch seed</div>
   <div><span class="chip" style="background:#ef4444"></span>Red: downstream from extras</div>
   <div style="margin-top:6px"><span class="chip" style="background:#06b6d4"></span>Highlight: descendants &nbsp; <span class="chip" style="background:#f59e0b"></span>Highlight: ancestor path</div>
 </div>
@@ -84,52 +80,77 @@
     <output id="donorsOut">80</output>
   </div>
 
-  <h4>+1 Chain (light blue)</h4>
+  <h4>+1 Branching (light)</h4>
   <div class="row">
-    <label for="plusDepth">Max +1 depth</label>
-    <input id="plusDepth" type="range" min="1" max="40" value="8">
-    <output id="plusDepthOut">8</output>
+    <label for="plusDepth">Max depth</label>
+    <input id="plusDepth" type="range" min="1" max="30" value="10">
+    <output id="plusDepthOut">10</output>
   </div>
   <div class="row">
     <label for="plusProb">Continue prob.</label>
-    <input id="plusProb" type="range" min="0" max="1" step="0.01" value="0.80">
-    <output id="plusProbOut">0.80</output>
+    <input id="plusProb" type="range" min="0" max="1" step="0.01" value="0.85">
+    <output id="plusProbOut">0.85</output>
+  </div>
+  <div class="row">
+    <label for="plusFanout">Avg referrals</label>
+    <input id="plusFanout" type="range" min="0" max="5" step="0.1" value="1.6">
+    <output id="plusFanoutOut">1.6</output>
+  </div>
+  <div class="row">
+    <label for="plusDecay">Depth decay</label>
+    <input id="plusDecay" type="range" min="0" max="1" step="0.01" value="0.90">
+    <output id="plusDecayOut">0.90</output>
   </div>
 
   <h4>Extra Branch (green → red)</h4>
   <div class="row">
-    <label for="extra">Extra prob./root</label>
+    <label for="extra">Seed prob./root</label>
     <input id="extra" type="range" min="0" max="1" step="0.01" value="0.30">
     <output id="extraOut">0.30</output>
   </div>
   <div class="row">
-    <label for="extraDepth">Max extra depth</label>
-    <input id="extraDepth" type="range" min="0" max="24" value="6">
-    <output id="extraDepthOut">6</output>
+    <label for="extraDepth">Max depth</label>
+    <input id="extraDepth" type="range" min="0" max="20" value="8">
+    <output id="extraDepthOut">8</output>
   </div>
   <div class="row">
-    <label for="extraProb">Extra continue</label>
+    <label for="extraProb">Continue prob.</label>
     <input id="extraProb" type="range" min="0" max="1" step="0.01" value="0.75">
     <output id="extraProbOut">0.75</output>
+  </div>
+  <div class="row">
+    <label for="extraFanout">Avg referrals</label>
+    <input id="extraFanout" type="range" min="0" max="4" step="0.1" value="2.0">
+    <output id="extraFanoutOut">2.0</output>
+  </div>
+  <div class="row">
+    <label for="extraDecay">Depth decay</label>
+    <input id="extraDecay" type="range" min="0" max="1" step="0.01" value="0.85">
+    <output id="extraDecayOut">0.85</output>
   </div>
 
   <h4>Layout</h4>
   <div class="row">
     <label for="radius">Sphere radius</label>
-    <input id="radius" type="range" min="100" max="1000" value="320">
-    <output id="radiusOut">320</output>
+    <input id="radius" type="range" min="100" max="1200" value="380">
+    <output id="radiusOut">380</output>
   </div>
   <div class="row">
     <label for="jitter">Child jitter</label>
-    <input id="jitter" type="range" min="2" max="120" value="32">
-    <output id="jitterOut">32</output>
+    <input id="jitter" type="range" min="2" max="120" value="36">
+    <output id="jitterOut">36</output>
   </div>
   <div class="row">
     <label for="seed">Seed</label>
     <input id="seed" type="text" placeholder="random" style="flex:1" />
   </div>
+  <div class="row">
+    <label for="cap">Max nodes cap</label>
+    <input id="cap" type="range" min="1000" max="20000" step="500" value="8000">
+    <output id="capOut">8000</output>
+  </div>
 
-  <h4>Highlight options</h4>
+  <h4>Highlight</h4>
   <div class="row">
     <label for="showAnc">Show ancestors</label>
     <input id="showAnc" type="checkbox" checked />
@@ -173,13 +194,14 @@ try {
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
   renderer.domElement.style.touchAction = 'none';
   root.appendChild(renderer.domElement);
+  renderer.setClearColor(0x000000, 1);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x000000); // black background
+  scene.background = new THREE.Color(0x000000); // black
 
   const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 5000);
   function resetView(){
-    camera.position.set(0, 0, 680);
+    camera.position.set(0, 0, 760);
     controls.target.set(0, 0, 0);
     controls.update();
   }
@@ -207,7 +229,7 @@ try {
   const state = {
     group:null, nodes:[], links:[], spheres:[], edges:null,
     glowDesc:null, glowAnc:null, rootWire:null,
-    levels:[], roots:[]
+    levels:[], roots:[], capped:false
   };
 
   // seedable RNG
@@ -217,6 +239,14 @@ try {
     if(!seedStr) return Math.random;
     const seed = xmur3(String(seedStr))();
     return mulberry32(seed);
+  }
+  // Poisson sampler (Knuth)
+  function poisson(lambda, rand){
+    if(lambda<=0) return 0;
+    const L = Math.exp(-lambda);
+    let k=0, p=1;
+    do { k++; p *= rand(); } while(p > L);
+    return k-1;
   }
 
   // dispose helper
@@ -237,13 +267,13 @@ try {
     if(state.edges) state.edges.material.opacity=0.35;
   }
 
-  // build / rebuild graph
+  // build / rebuild graph (with branching)
   function buildGraph(params){
     const {
       initialDonors=80,
-      plusDepth=8, plusProb=0.8,
-      extraProbRoot=0.3, extraDepth=6, extraContProb=0.75,
-      sphereRadius=320, childJitter=32, seed=''
+      plusDepth=10, plusProb=0.85, plusFanout=1.6, plusDecay=0.90,
+      extraProbRoot=0.30, extraDepth=8, extraContProb=0.75, extraFanout=2.0, extraDecay=0.85,
+      sphereRadius=380, childJitter=36, seed='', nodeCap=8000
     } = params;
 
     // clean previous
@@ -251,6 +281,7 @@ try {
     state.group = new THREE.Group(); scene.add(state.group);
     state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[];
     clearHi();
+    state.capped=false;
 
     const rand = makeRNG(seed);
 
@@ -258,8 +289,9 @@ try {
     const COLOR_EDGE=0x5b6b95;
 
     let id=0;
-    function addNode(type,parent=null){
-      const n={id:id++,type,parent,children:[]};
+    function addNode(type,parent=null,depth=0){
+      if(state.nodes.length >= nodeCap){ state.capped=true; return null; }
+      const n={id:id++,type,parent,children:[],depth};
       state.nodes.push(n);
       if(parent!=null){
         state.links.push({source:parent,target:n.id});
@@ -269,28 +301,52 @@ try {
     }
 
     // roots
-    for(let i=0;i<initialDonors;i++){ const r = addNode('dark', null); state.roots.push(r.id); }
+    for(let i=0;i<initialDonors;i++){ const r = addNode('dark', null, 0); if(r) state.roots.push(r.id); if(state.capped) break; }
 
-    // helper to grow linear chains
-    function growChain(startId, nodeType, maxDepth, contProb){
-      let depth=0, parentId=startId;
-      while(depth < maxDepth && rand() < contProb){
-        const child = addNode(nodeType, parentId);
-        parentId = child.id;
-        depth++;
+    // --- Branching helper (BFS) ---
+    function growBranchingFrom(parentIds, nodeType, maxDepth, contProb, avgFanout, decay){
+      const q=[];
+      // UPDATED: seed each parent with k0 = max(1, Poisson(avgFanout)) children (depth=1)
+      for(const pid of parentIds){
+        if(state.capped) break;
+        const k0 = Math.max(1, poisson(Math.max(0, avgFanout), rand));
+        for(let i=0;i<k0 && !state.capped;i++){
+          const child = addNode(nodeType, pid, 1);
+          if(child) q.push({id:child.id, depth:1});
+        }
+      }
+
+      // BFS expansion for deeper levels
+      while(q.length && !state.capped){
+        const {id:pid, depth} = q.shift();
+        if(depth >= maxDepth) continue;
+
+        const scale = Math.pow(decay, Math.max(0, depth-1)); // depth 1 => 1.0
+        if(rand() >= contProb * scale) continue;
+
+        const lam = Math.max(0, avgFanout * scale);
+        let k = poisson(lam, rand); // number of children to spawn
+        while(k-- > 0 && !state.capped){
+          const child = addNode(nodeType, pid, depth+1);
+          if(child) q.push({id:child.id, depth:depth+1});
+        }
       }
     }
 
     // per-root growth
-    for(let r=0;r<initialDonors;r++){
-      // +1 chain
-      const first = addNode('light', r);
-      growChain(first.id, 'light', Math.max(0, plusDepth-1), plusProb);
+    // Light referrals (branching)
+    const rootIds = state.roots.slice();
+    growBranchingFrom(rootIds, 'light', plusDepth, plusProb, plusFanout, plusDecay);
 
-      // extra branch (green -> red chain)
+    // Extra branch (green seed + red branching)
+    for(const r of rootIds){
+      if(state.capped) break;
       if(rand() < extraProbRoot){
-        const g = addNode('green', r);
-        growChain(g.id, 'red', extraDepth, extraContProb);
+        const g = addNode('green', r, 1);
+        if(g){
+          // Red branching from green — multiple red children possible at depth 1
+          growBranchingFrom([g.id], 'red', extraDepth, extraContProb, extraFanout, extraDecay);
+        }
       }
     }
 
@@ -311,7 +367,8 @@ try {
     state.nodes.forEach(n=>{
       if(n.type!=='dark'){
         const p = state.nodes[n.parent] || {x:0,y:0,z:0};
-        const j = ()=> (rand()*2-1)*childJitter;
+        const depthScale = 1 + 0.03 * Math.max(0, (n.depth||1)-1); // slight spread with depth
+        const j = ()=> (rand()*2-1)*childJitter*depthScale;
         n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
       }
     });
@@ -335,12 +392,12 @@ try {
       pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;
     });
     const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE,transparent:true,opacity:0.35}));
+    state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x5b6b95,transparent:true,opacity:0.35}));
     state.group.add(state.edges);
 
     // metrics
     computeLevelsAndMetrics();
-    updateMetricsUI();
+    updateMetricsUI(nodeCap);
   }
 
   function computeLevelsAndMetrics(){
@@ -363,34 +420,36 @@ try {
     state.leafCount = state.nodes.filter(n=>n.children.length===0).length;
     state.avgChildrenAtRoot = state.roots.reduce((acc,r)=>acc+state.nodes[r].children.length,0)/Math.max(1,state.roots.length);
 
-    function lightChainLenFrom(rootId){
-      const firstLight = state.nodes[rootId].children.map(id=>state.nodes[id]).find(n=>n.type==='light');
-      if(!firstLight) return 0;
-      let len=1, cur=firstLight;
-      while(true){
-        const next = cur.children.map(id=>state.nodes[id]).find(n=>n.type==='light');
-        if(next){ len++; cur=next; } else break;
+    function longestLightChainFrom(rootId){
+      const children = state.nodes[rootId].children;
+      let best=0;
+      for(const ch of children){
+        if(state.nodes[ch].type!=='light') continue;
+        let len=1, cur=ch;
+        while(true){
+          const next = state.nodes[cur].children.find(id=>state.nodes[id].type==='light');
+          if(next!=null){ len++; cur=next; } else break;
+        }
+        if(len>best) best=len;
       }
-      return len;
+      return best;
     }
-    state.longestLightChain = state.roots.reduce((m,r)=>Math.max(m, lightChainLenFrom(r)), 0);
+    state.longestLightChain = state.roots.reduce((m,r)=>Math.max(m, longestLightChainFrom(r)), 0);
   }
 
-  // helpers for ancestry
+  // ancestry helpers
   function rootOf(id){
     let cur = id, steps=0;
     while(state.nodes[cur].parent!=null){ cur = state.nodes[cur].parent; steps++; }
     return {root:cur, steps};
   }
-  function buildAncestorPathLines(startId, cap){ // cap 0 => unlimited
+  function buildAncestorPathLines(startId, cap){
     const maxSegs = (cap===0)? 1e9 : cap;
-    let child = startId, segs = [];
-    let used = 0;
+    let child = startId, segs = []; let used = 0;
     while(state.nodes[child].parent!=null && used < maxSegs){
       const parent = state.nodes[child].parent;
       segs.push([parent, child]);
-      child = parent;
-      used++;
+      child = parent; used++;
     }
     const gpos=new Float32Array(segs.length*6); let i=0;
     segs.forEach(([a,b])=>{
@@ -422,7 +481,7 @@ try {
   function highlight(startId){
     clearHi();
 
-    // --- descendants (BFS) ---
+    // Descendants (BFS)
     const keepDesc=new Set([startId]), q=[{id:startId, lvl:0}], perLevel=[];
     while(q.length){
       const {id,lvl} = q.shift();
@@ -432,7 +491,7 @@ try {
       });
     }
 
-    // --- ancestors (path to root) ---
+    // Ancestors
     const showAnc = document.getElementById('showAnc').checked;
     const ancCap = parseInt(document.getElementById('ancCap').value || '0', 10); // 0=∞
     const {root:rootId, steps:stepsToRoot} = rootOf(startId);
@@ -496,13 +555,22 @@ try {
   const donors=$('donors'), donorsOut=$('donorsOut');
   const plusDepth=$('plusDepth'), plusDepthOut=$('plusDepthOut');
   const plusProb=$('plusProb'), plusProbOut=$('plusProbOut');
+  const plusFanout=$('plusFanout'), plusFanoutOut=$('plusFanoutOut');
+  const plusDecay=$('plusDecay'), plusDecayOut=$('plusDecayOut');
+
   const extra=$('extra'), extraOut=$('extraOut');
   const extraDepth=$('extraDepth'), extraDepthOut=$('extraDepthOut');
   const extraProb=$('extraProb'), extraProbOut=$('extraProbOut');
+  const extraFanout=$('extraFanout'), extraFanoutOut=$('extraFanoutOut');
+  const extraDecay=$('extraDecay'), extraDecayOut=$('extraDecayOut');
+
   const radius=$('radius'), radiusOut=$('radiusOut');
   const jitter=$('jitter'), jitterOut=$('jitterOut');
-  const seed=$('seed'), auto=$('auto');
+  const seed=$('seed');
+  const cap=$('cap'), capOut=$('capOut');
+
   const showAnc=$('showAnc'), ancCap=$('ancCap'), ancCapOut=$('ancCapOut');
+  const auto=$('auto');
   const rebuildBtn=$('rebuildBtn'), resetViewBtn=$('resetViewBtn'), clearHiBtn=$('clearHiBtn');
   const metricsDiv = $('metrics');
 
@@ -510,11 +578,18 @@ try {
     donorsOut.textContent=donors.value;
     plusDepthOut.textContent=plusDepth.value;
     plusProbOut.textContent=Number(plusProb.value).toFixed(2);
+    plusFanoutOut.textContent=Number(plusFanout.value).toFixed(1);
+    plusDecayOut.textContent=Number(plusDecay.value).toFixed(2);
+
     extraOut.textContent=Number(extra.value).toFixed(2);
     extraDepthOut.textContent=extraDepth.value;
     extraProbOut.textContent=Number(extraProb.value).toFixed(2);
+    extraFanoutOut.textContent=Number(extraFanout.value).toFixed(1);
+    extraDecayOut.textContent=Number(extraDecay.value).toFixed(2);
+
     radiusOut.textContent=radius.value;
     jitterOut.textContent=jitter.value;
+    capOut.textContent=cap.value;
     ancCapOut.textContent = (parseInt(ancCap.value,10)===0) ? '∞' : ancCap.value;
   }
   function getParams(){
@@ -522,17 +597,22 @@ try {
       initialDonors: parseInt(donors.value,10),
       plusDepth: parseInt(plusDepth.value,10),
       plusProb: clamp01(parseFloat(plusProb.value)),
+      plusFanout: Math.max(0, parseFloat(plusFanout.value)),
+      plusDecay: clamp01(parseFloat(plusDecay.value)),
       extraProbRoot: clamp01(parseFloat(extra.value)),
       extraDepth: parseInt(extraDepth.value,10),
       extraContProb: clamp01(parseFloat(extraProb.value)),
+      extraFanout: Math.max(0, parseFloat(extraFanout.value)),
+      extraDecay: clamp01(parseFloat(extraDecay.value)),
       sphereRadius: parseInt(radius.value,10),
       childJitter: parseInt(jitter.value,10),
-      seed: (seed.value || '').trim()
+      seed: (seed.value || '').trim(),
+      nodeCap: parseInt(cap.value,10)
     };
   }
   function clamp01(x){ return isFinite(x) ? Math.max(0, Math.min(1, x)) : 0; }
 
-  function updateMetricsUI(){
+  function updateMetricsUI(nodeCap){
     const m = {
       roots: state.roots.length,
       nodes: state.totalNodes,
@@ -540,12 +620,14 @@ try {
       maxDepth: state.maxObservedDepth,
       leaves: state.leafCount,
       avgChildrenAtRoot: state.avgChildrenAtRoot,
-      longestLightChain: state.longestLightChain
+      longestLightChain: state.longestLightChain,
+      capped: state.capped
     };
     metricsDiv.innerHTML =
       `<div><b>Roots:</b> ${m.roots} &nbsp; <b>Nodes:</b> ${m.nodes} &nbsp; <b>Links:</b> ${m.links}</div>
        <div><b>Max depth (global):</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leaves}</div>
-       <div><b>Avg children/root:</b> ${m.avgChildrenAtRoot.toFixed(2)} &nbsp; <b>Longest +1 chain:</b> ${m.longestLightChain}</div>`;
+       <div><b>Avg children/root:</b> ${m.avgChildrenAtRoot.toFixed(2)} &nbsp; <b>Longest +1 chain:</b> ${m.longestLightChain}</div>
+       <div><b>Node cap:</b> ${nodeCap} &nbsp; <b>Capped:</b> ${m.capped ? 'Yes' : 'No'}</div>`;
   }
 
   let debounceTimer=null;
@@ -555,7 +637,9 @@ try {
     debounceTimer=setTimeout(()=>{ setStatus('rebuilding…'); buildGraph(getParams()); setStatus('donor map ready — rotate/zoom, click/tap to explore'); }, 150);
   }
 
-  [donors,plusDepth,plusProb,extra,extraDepth,extraProb,radius,jitter,seed].forEach(el=>{
+  [donors,plusDepth,plusProb,plusFanout,plusDecay,
+   extra,extraDepth,extraProb,extraFanout,extraDecay,
+   radius,jitter,seed,cap].forEach(el=>{
     el.addEventListener('input', ()=>{ syncOutputs(); scheduleRebuild(); });
     el.addEventListener('change', ()=>{ syncOutputs(); scheduleRebuild(); });
   });
