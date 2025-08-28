@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>Smart Coin® — 3D Donor Dedication Map</title>
 <style>
   /* Dark theme */
   :root{
     --bg:#000000; --panel:#121a36; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d;
+    --btn:#0b1020; --accent:#6ee7ff;
   }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
     font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -19,19 +20,21 @@
     border:1px solid var(--border);border-radius:8px;
     padding:6px 10px;font-size:12px;max-width:80vw;white-space:pre-wrap
   }
+
+  /* Legend (desktop default) */
   #legend{
     position:fixed;left:10px;top:10px;z-index:10;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:8px 10px;
-    font-size:12px;color:#cfe1ff
+    font-size:12px;color:#cfe1ff;max-width:320px
   }
   .chip{display:inline-block;width:10px;height:10px;border-radius:50%;
     margin-right:6px;vertical-align:middle;border:1px solid #2f3b66}
 
-  /* Controls panel (top-right) */
+  /* Controls panel (desktop default) */
   #ui{
     position:fixed;right:10px;top:10px;z-index:11;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:10px 12px;
-    font-size:12px;color:#eaf0ff;min-width:280px;max-width:46ch
+    font-size:12px;color:#eaf0ff;min-width:280px;max-width:46ch;max-height:85vh;overflow:auto
   }
   #ui h3{margin:0 0 8px 0;font-size:13px}
   #ui h4{margin:12px 0 6px 0;font-size:12px;color:#cfe1ff}
@@ -41,14 +44,52 @@
   #ui output{width:52px;text-align:right;display:inline-block}
   #ui .btns{display:flex;gap:8px;margin-top:8px}
   #ui button{
-    cursor:pointer;border:1px solid var(--border);background:#0b1020;color:#eaf0ff;border-radius:6px;
+    cursor:pointer;border:1px solid var(--border);background:var(--btn);color:#eaf0ff;border-radius:6px;
     padding:6px 10px;font-size:12px
   }
   #metrics{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;line-height:1.4}
   #metrics b{font-weight:600}
-  input[type="range"]{accent-color:#6ee7ff}
+  input[type="range"]{accent-color:var(--accent)}
+
+  /* Floating toggle buttons (mobile only) */
+  #toggles{
+    position:fixed;right:10px;bottom:12px;z-index:12;display:none;flex-direction:column;gap:8px
+  }
+  #toggles button{
+    background:var(--panel);color:#eaf0ff;border:1px solid var(--border);
+    border-radius:999px;padding:10px 12px;font-size:12px;cursor:pointer
+  }
+
+  /* Bottom-sheet behavior for mobile */
+  @media (max-width: 768px){
+    #toggles{display:flex}
+    /* Start hidden as sheets */
+    .sheet{
+      position:fixed;left:50%;transform:translateX(-50%) translateY(110%);
+      width:min(94vw, 560px);max-height:60vh;bottom:calc(12px + env(safe-area-inset-bottom));
+      background:var(--panel);border:1px solid var(--border);border-radius:12px;
+      padding:10px 12px;z-index:11;box-shadow:0 8px 30px rgba(0,0,0,.45);
+      overflow:auto;transition:transform .22s ease;
+    }
+    .sheet.open{transform:translateX(-50%) translateY(0)}
+    /* Convert legend/ui to sheets */
+    #legend, #ui{top:auto;left:50%;right:auto}
+    #legend{display:block}
+    #legend.sheet .chip{margin-bottom:2px}
+    /* Simplify UI widths on mobile */
+    #ui label{width:128px}
+    #status{max-width:72vw}
+  }
+
+  /* Tap blocker behind sheets (mobile) */
+  #backdrop{
+    position:fixed;inset:0;background:rgba(0,0,0,.35);
+    z-index:10;display:none;backdrop-filter:blur(1px)
+  }
+  #backdrop.show{display:block}
 </style>
 
+<!-- ES module shims + import map -->
 <script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 <script type="importmap">
 {
@@ -63,6 +104,10 @@
 <body>
 <div id="app"></div>
 
+<!-- Backdrop for mobile sheets -->
+<div id="backdrop"></div>
+
+<!-- Legend -->
 <div id="legend">
   <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: initial donors (roots)</div>
   <div><span class="chip" style="background:#93c5fd"></span>Light blue: referrals (+1 branching)</div>
@@ -71,7 +116,7 @@
   <div style="margin-top:6px"><span class="chip" style="background:#06b6d4"></span>Highlight: descendants &nbsp; <span class="chip" style="background:#f59e0b"></span>Highlight: ancestor path</div>
 </div>
 
-<!-- Control panel -->
+<!-- Controls -->
 <div id="ui">
   <h3>Donor Map Controls</h3>
   <div class="row">
@@ -81,90 +126,29 @@
   </div>
 
   <h4>+1 Branching (light)</h4>
-  <div class="row">
-    <label for="plusDepth">Max depth</label>
-    <input id="plusDepth" type="range" min="1" max="30" value="10">
-    <output id="plusDepthOut">10</output>
-  </div>
-  <div class="row">
-    <label for="plusProb">Continue prob.</label>
-    <input id="plusProb" type="range" min="0" max="1" step="0.01" value="0.85">
-    <output id="plusProbOut">0.85</output>
-  </div>
-  <div class="row">
-    <label for="plusFanout">Avg referrals</label>
-    <input id="plusFanout" type="range" min="0" max="5" step="0.1" value="1.6">
-    <output id="plusFanoutOut">1.6</output>
-  </div>
-  <div class="row">
-    <label for="plusDecay">Depth decay</label>
-    <input id="plusDecay" type="range" min="0" max="1" step="0.01" value="0.90">
-    <output id="plusDecayOut">0.90</output>
-  </div>
+  <div class="row"><label for="plusDepth">Max depth</label><input id="plusDepth" type="range" min="1" max="30" value="10"><output id="plusDepthOut">10</output></div>
+  <div class="row"><label for="plusProb">Continue prob.</label><input id="plusProb" type="range" min="0" max="1" step="0.01" value="0.85"><output id="plusProbOut">0.85</output></div>
+  <div class="row"><label for="plusFanout">Avg referrals</label><input id="plusFanout" type="range" min="0" max="5" step="0.1" value="1.6"><output id="plusFanoutOut">1.6</output></div>
+  <div class="row"><label for="plusDecay">Depth decay</label><input id="plusDecay" type="range" min="0" max="1" step="0.01" value="0.90"><output id="plusDecayOut">0.90</output></div>
 
   <h4>Extra Branch (green → red)</h4>
-  <div class="row">
-    <label for="extra">Seed prob./root</label>
-    <input id="extra" type="range" min="0" max="1" step="0.01" value="0.30">
-    <output id="extraOut">0.30</output>
-  </div>
-  <div class="row">
-    <label for="extraDepth">Max depth</label>
-    <input id="extraDepth" type="range" min="0" max="20" value="8">
-    <output id="extraDepthOut">8</output>
-  </div>
-  <div class="row">
-    <label for="extraProb">Continue prob.</label>
-    <input id="extraProb" type="range" min="0" max="1" step="0.01" value="0.75">
-    <output id="extraProbOut">0.75</output>
-  </div>
-  <div class="row">
-    <label for="extraFanout">Avg referrals</label>
-    <input id="extraFanout" type="range" min="0" max="4" step="0.1" value="2.0">
-    <output id="extraFanoutOut">2.0</output>
-  </div>
-  <div class="row">
-    <label for="extraDecay">Depth decay</label>
-    <input id="extraDecay" type="range" min="0" max="1" step="0.01" value="0.85">
-    <output id="extraDecayOut">0.85</output>
-  </div>
+  <div class="row"><label for="extra">Seed prob./root</label><input id="extra" type="range" min="0" max="1" step="0.01" value="0.30"><output id="extraOut">0.30</output></div>
+  <div class="row"><label for="extraDepth">Max depth</label><input id="extraDepth" type="range" min="0" max="20" value="8"><output id="extraDepthOut">8</output></div>
+  <div class="row"><label for="extraProb">Continue prob.</label><input id="extraProb" type="range" min="0" max="1" step="0.01" value="0.75"><output id="extraProbOut">0.75</output></div>
+  <div class="row"><label for="extraFanout">Avg referrals</label><input id="extraFanout" type="range" min="0" max="4" step="0.1" value="2.0"><output id="extraFanoutOut">2.0</output></div>
+  <div class="row"><label for="extraDecay">Depth decay</label><input id="extraDecay" type="range" min="0" max="1" step="0.01" value="0.85"><output id="extraDecayOut">0.85</output></div>
 
   <h4>Layout</h4>
-  <div class="row">
-    <label for="radius">Sphere radius</label>
-    <input id="radius" type="range" min="100" max="1200" value="380">
-    <output id="radiusOut">380</output>
-  </div>
-  <div class="row">
-    <label for="jitter">Child jitter</label>
-    <input id="jitter" type="range" min="2" max="120" value="36">
-    <output id="jitterOut">36</output>
-  </div>
-  <div class="row">
-    <label for="seed">Seed</label>
-    <input id="seed" type="text" placeholder="random" style="flex:1" />
-  </div>
-  <div class="row">
-    <label for="cap">Max nodes cap</label>
-    <input id="cap" type="range" min="1000" max="20000" step="500" value="8000">
-    <output id="capOut">8000</output>
-  </div>
+  <div class="row"><label for="radius">Sphere radius</label><input id="radius" type="range" min="100" max="1200" value="380"><output id="radiusOut">380</output></div>
+  <div class="row"><label for="jitter">Child jitter</label><input id="jitter" type="range" min="2" max="120" value="36"><output id="jitterOut">36</output></div>
+  <div class="row"><label for="seed">Seed</label><input id="seed" type="text" placeholder="random" style="flex:1" /></div>
+  <div class="row"><label for="cap">Max nodes cap</label><input id="cap" type="range" min="1000" max="20000" step="500" value="8000"><output id="capOut">8000</output></div>
 
   <h4>Highlight</h4>
-  <div class="row">
-    <label for="showAnc">Show ancestors</label>
-    <input id="showAnc" type="checkbox" checked />
-  </div>
-  <div class="row">
-    <label for="ancCap">Ancestor depth cap</label>
-    <input id="ancCap" type="range" min="0" max="50" value="0">
-    <output id="ancCapOut">∞</output>
-  </div>
+  <div class="row"><label for="showAnc">Show ancestors</label><input id="showAnc" type="checkbox" checked /></div>
+  <div class="row"><label for="ancCap">Ancestor depth cap</label><input id="ancCap" type="range" min="0" max="50" value="0"><output id="ancCapOut">∞</output></div>
 
-  <div class="row">
-    <label for="auto">Auto rebuild</label>
-    <input id="auto" type="checkbox" checked />
-  </div>
+  <div class="row"><label for="auto">Auto rebuild</label><input id="auto" type="checkbox" checked /></div>
 
   <div class="btns">
     <button id="rebuildBtn" type="button">Rebuild</button>
@@ -175,6 +159,12 @@
   <div id="metrics"></div>
 </div>
 
+<!-- Mobile toggles -->
+<div id="toggles">
+  <button id="toggleLegend" type="button">Legend</button>
+  <button id="toggleControls" type="button">Controls</button>
+</div>
+
 <div id="status">Status: loading…</div>
 
 <script type="module">
@@ -183,6 +173,47 @@ const setStatus = (m)=> statusEl.textContent = 'Status: ' + m;
 const showError = (e)=>{ setStatus('Error: ' + (e?.message||e)); console.error(e); };
 
 const root = document.getElementById('app');
+const legend = document.getElementById('legend');
+const ui = document.getElementById('ui');
+const toggles = document.getElementById('toggles');
+const backdrop = document.getElementById('backdrop');
+
+function isMobile(){ return window.matchMedia('(max-width: 768px)').matches; }
+function applySheetMode(){
+  const mob = isMobile();
+  if(mob){
+    legend.classList.add('sheet'); ui.classList.add('sheet');
+    legend.classList.remove('open'); ui.classList.remove('open');
+    backdrop.classList.remove('show');
+  }else{
+    legend.classList.remove('sheet','open'); ui.classList.remove('sheet','open');
+    backdrop.classList.remove('show');
+  }
+}
+applySheetMode();
+window.addEventListener('resize', applySheetMode);
+
+// Sheet toggles (mobile)
+function openSheet(el){
+  legend.classList.remove('open');
+  ui.classList.remove('open');
+  el.classList.add('open');
+  backdrop.classList.add('show');
+}
+function closeSheets(){
+  legend.classList.remove('open'); ui.classList.remove('open'); backdrop.classList.remove('show');
+}
+document.getElementById('toggleLegend').addEventListener('click', ()=> openSheet(legend));
+document.getElementById('toggleControls').addEventListener('click', ()=> openSheet(ui));
+backdrop.addEventListener('click', closeSheets);
+
+// Prevent OrbitControls from grabbing while scrolling panels (mobile)
+[legend, ui].forEach(el=>{
+  el.addEventListener('pointerdown', ()=> window._pauseOrbit = true);
+  el.addEventListener('pointerup',   ()=> window._pauseOrbit = false);
+  el.addEventListener('pointercancel',()=> window._pauseOrbit = false);
+  el.addEventListener('scroll', ()=> window._pauseOrbit = true);
+});
 
 try {
   setStatus('loading modules…');
@@ -232,22 +263,11 @@ try {
     levels:[], roots:[], capped:false
   };
 
-  // seedable RNG
+  // seedable RNG + Poisson
   function xmur3(str){ for(var i=0,h=1779033703^str.length;i<str.length;i++) h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19; return function(){ h=Math.imul(h^ (h>>>16), 2246822507); h=Math.imul(h^ (h>>>13), 3266489909); return (h^ (h>>>16))>>>0; } }
   function mulberry32(a){ return function(){ var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15, t|1); t^=t+Math.imul(t^t>>>7, t|61); return ((t^t>>>14)>>>0)/4294967296; } }
-  function makeRNG(seedStr){
-    if(!seedStr) return Math.random;
-    const seed = xmur3(String(seedStr))();
-    return mulberry32(seed);
-  }
-  // Poisson sampler (Knuth)
-  function poisson(lambda, rand){
-    if(lambda<=0) return 0;
-    const L = Math.exp(-lambda);
-    let k=0, p=1;
-    do { k++; p *= rand(); } while(p > L);
-    return k-1;
-  }
+  function makeRNG(seedStr){ if(!seedStr) return Math.random; const seed = xmur3(String(seedStr))(); return mulberry32(seed); }
+  function poisson(lambda, rand){ if(lambda<=0) return 0; const L = Math.exp(-lambda); let k=0, p=1; do { k++; p*=rand(); } while(p>L); return k-1; }
 
   // dispose helper
   function dispose(obj){
@@ -276,12 +296,10 @@ try {
       sphereRadius=380, childJitter=36, seed='', nodeCap=8000
     } = params;
 
-    // clean previous
     if(state.group){ scene.remove(state.group); dispose(state.group); }
     state.group = new THREE.Group(); scene.add(state.group);
     state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[];
-    clearHi();
-    state.capped=false;
+    clearHi(); state.capped=false;
 
     const rand = makeRNG(seed);
 
@@ -303,10 +321,9 @@ try {
     // roots
     for(let i=0;i<initialDonors;i++){ const r = addNode('dark', null, 0); if(r) state.roots.push(r.id); if(state.capped) break; }
 
-    // --- Branching helper (BFS) ---
+    // Branching helper
     function growBranchingFrom(parentIds, nodeType, maxDepth, contProb, avgFanout, decay){
       const q=[];
-      // UPDATED: seed each parent with k0 = max(1, Poisson(avgFanout)) children (depth=1)
       for(const pid of parentIds){
         if(state.capped) break;
         const k0 = Math.max(1, poisson(Math.max(0, avgFanout), rand));
@@ -315,17 +332,13 @@ try {
           if(child) q.push({id:child.id, depth:1});
         }
       }
-
-      // BFS expansion for deeper levels
       while(q.length && !state.capped){
         const {id:pid, depth} = q.shift();
         if(depth >= maxDepth) continue;
-
-        const scale = Math.pow(decay, Math.max(0, depth-1)); // depth 1 => 1.0
+        const scale = Math.pow(decay, Math.max(0, depth-1));
         if(rand() >= contProb * scale) continue;
-
         const lam = Math.max(0, avgFanout * scale);
-        let k = poisson(lam, rand); // number of children to spawn
+        let k = poisson(lam, rand);
         while(k-- > 0 && !state.capped){
           const child = addNode(nodeType, pid, depth+1);
           if(child) q.push({id:child.id, depth:depth+1});
@@ -334,19 +347,13 @@ try {
     }
 
     // per-root growth
-    // Light referrals (branching)
-    const rootIds = state.roots.slice();
-    growBranchingFrom(rootIds, 'light', plusDepth, plusProb, plusFanout, plusDecay);
+    growBranchingFrom(state.roots.slice(), 'light', plusDepth, plusProb, plusFanout, plusDecay);
 
-    // Extra branch (green seed + red branching)
-    for(const r of rootIds){
+    for(const r of state.roots){
       if(state.capped) break;
       if(rand() < extraProbRoot){
         const g = addNode('green', r, 1);
-        if(g){
-          // Red branching from green — multiple red children possible at depth 1
-          growBranchingFrom([g.id], 'red', extraDepth, extraContProb, extraFanout, extraDecay);
-        }
+        if(g){ growBranchingFrom([g.id], 'red', extraDepth, extraContProb, extraFanout, extraDecay); }
       }
     }
 
@@ -367,7 +374,7 @@ try {
     state.nodes.forEach(n=>{
       if(n.type!=='dark'){
         const p = state.nodes[n.parent] || {x:0,y:0,z:0};
-        const depthScale = 1 + 0.03 * Math.max(0, (n.depth||1)-1); // slight spread with depth
+        const depthScale = 1 + 0.03 * Math.max(0, (n.depth||1)-1);
         const j = ()=> (rand()*2-1)*childJitter*depthScale;
         n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
       }
@@ -392,10 +399,9 @@ try {
       pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;
     });
     const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-    state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x5b6b95,transparent:true,opacity:0.35}));
+    state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE,transparent:true,opacity:0.35}));
     state.group.add(state.edges);
 
-    // metrics
     computeLevelsAndMetrics();
     updateMetricsUI(nodeCap);
   }
@@ -467,7 +473,7 @@ try {
     if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y) > 6) moved=true;
   });
   renderer.domElement.addEventListener('pointerup', (ev)=>{
-    if(moved) return;
+    if(moved || window._pauseOrbit) return;
     const rect=renderer.domElement.getBoundingClientRect();
     const px=(ev.clientX-rect.left)/rect.width;
     const py=(ev.clientY-rect.top)/rect.height;
@@ -532,7 +538,6 @@ try {
         state.glowAnc=new THREE.LineSegments(ageo, new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.95}));
         state.group.add(state.glowAnc);
       }
-      // ring the true root
       const r = state.nodes[rootId];
       const wire = new THREE.WireframeGeometry(new THREE.SphereGeometry(6.6, 10, 8));
       state.rootWire = new THREE.LineSegments(wire, new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:0.85}));
@@ -546,8 +551,12 @@ try {
     setStatus(`selected #${startId} — descendants: size ${subtreeSize}, depth ${depthDesc}, leaves ${leavesDesc} | steps to root: ${stepsToRoot}${(ancCap>0&&stepsToRoot>ancCap)?' (showing '+ancCap+')':''}`);
   }
 
-  // animation loop
-  function loop(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop); }
+  // animation loop (pause if interacting with sheets)
+  function loop(){
+    if(!window._pauseOrbit){ controls.update(); }
+    renderer.render(scene,camera);
+    requestAnimationFrame(loop);
+  }
   loop();
 
   // ---- UI wiring ----
@@ -625,7 +634,7 @@ try {
     };
     metricsDiv.innerHTML =
       `<div><b>Roots:</b> ${m.roots} &nbsp; <b>Nodes:</b> ${m.nodes} &nbsp; <b>Links:</b> ${m.links}</div>
-       <div><b>Max depth (global):</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leaves}</div>
+       <div><b>Max depth (global):</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leafCount}</div>
        <div><b>Avg children/root:</b> ${m.avgChildrenAtRoot.toFixed(2)} &nbsp; <b>Longest +1 chain:</b> ${m.longestLightChain}</div>
        <div><b>Node cap:</b> ${nodeCap} &nbsp; <b>Capped:</b> ${m.capped ? 'Yes' : 'No'}</div>`;
   }
