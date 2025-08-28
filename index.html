@@ -32,11 +32,12 @@
   #ui{
     position:fixed;right:10px;top:10px;z-index:11;background:var(--panel);
     border:1px solid var(--border);border-radius:8px;padding:10px 12px;
-    font-size:12px;color:#111827;min-width:240px;max-width:40ch
+    font-size:12px;color:#111827;min-width:260px;max-width:42ch
   }
   #ui h3{margin:0 0 8px 0;font-size:13px}
+  #ui h4{margin:12px 0 6px 0;font-size:12px;color:#374151}
   #ui .row{display:flex;align-items:center;gap:8px;margin:8px 0}
-  #ui label{width:110px}
+  #ui label{width:130px}
   #ui input[type="range"]{flex:1}
   #ui output{width:46px;text-align:right;display:inline-block}
   #ui .btns{display:flex;gap:8px;margin-top:8px}
@@ -44,6 +45,8 @@
     cursor:pointer;border:1px solid var(--border);background:#fff;border-radius:6px;
     padding:6px 10px;font-size:12px
   }
+  #metrics{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;line-height:1.4}
+  #metrics b{font-weight:600}
 </style>
 
 <!-- Import-map shim (for Safari/older Chromium) -->
@@ -64,9 +67,9 @@
 <div id="app"></div>
 
 <div id="legend">
-  <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: initial donors</div>
-  <div><span class="chip" style="background:#93c5fd"></span>Light blue: each donor’s +1</div>
-  <div><span class="chip" style="background:#22c55e"></span>Green: extras (&gt;1)</div>
+  <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: initial donors (roots)</div>
+  <div><span class="chip" style="background:#93c5fd"></span>Light blue: +1 chain</div>
+  <div><span class="chip" style="background:#22c55e"></span>Green: extra branch</div>
   <div><span class="chip" style="background:#ef4444"></span>Red: downstream from extras</div>
 </div>
 
@@ -78,33 +81,64 @@
     <input id="donors" type="range" min="10" max="400" value="80">
     <output id="donorsOut">80</output>
   </div>
+
+  <h4>+1 Chain (light blue)</h4>
   <div class="row">
-    <label for="extra">Extra prob.</label>
+    <label for="plusDepth">Max +1 depth</label>
+    <input id="plusDepth" type="range" min="1" max="20" value="6">
+    <output id="plusDepthOut">6</output>
+  </div>
+  <div class="row">
+    <label for="plusProb">Continue prob.</label>
+    <input id="plusProb" type="range" min="0" max="1" step="0.01" value="0.80">
+    <output id="plusProbOut">0.80</output>
+  </div>
+
+  <h4>Extra Branch (green → red)</h4>
+  <div class="row">
+    <label for="extra">Extra prob./root</label>
     <input id="extra" type="range" min="0" max="1" step="0.01" value="0.30">
     <output id="extraOut">0.30</output>
   </div>
   <div class="row">
+    <label for="extraDepth">Max extra depth</label>
+    <input id="extraDepth" type="range" min="0" max="12" value="3">
+    <output id="extraDepthOut">3</output>
+  </div>
+  <div class="row">
+    <label for="extraProb">Extra continue</label>
+    <input id="extraProb" type="range" min="0" max="1" step="0.01" value="0.75">
+    <output id="extraProbOut">0.75</output>
+  </div>
+
+  <h4>Layout</h4>
+  <div class="row">
     <label for="radius">Sphere radius</label>
-    <input id="radius" type="range" min="100" max="600" value="260">
+    <input id="radius" type="range" min="100" max="800" value="260">
     <output id="radiusOut">260</output>
   </div>
   <div class="row">
     <label for="jitter">Child jitter</label>
-    <input id="jitter" type="range" min="2" max="60" value="28">
+    <input id="jitter" type="range" min="2" max="80" value="28">
     <output id="jitterOut">28</output>
   </div>
   <div class="row">
     <label for="seed">Seed</label>
     <input id="seed" type="text" placeholder="random" style="flex:1" />
   </div>
+
   <div class="row">
     <label for="auto">Auto rebuild</label>
     <input id="auto" type="checkbox" checked />
   </div>
+
   <div class="btns">
     <button id="rebuildBtn" type="button">Rebuild</button>
     <button id="resetViewBtn" type="button">Reset view</button>
+    <button id="clearHiBtn" type="button">Clear highlight</button>
   </div>
+
+  <div id="metrics"></div>
 </div>
 
 <div id="status">Status: loading…</div>
@@ -124,6 +158,7 @@ try {
   // ---- renderer/scene/camera ----
   const renderer = new THREE.WebGLRenderer({ antialias:true });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
+  renderer.domElement.style.touchAction = 'none'; // better pointer handling
   root.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -157,7 +192,8 @@ try {
 
   // ---- interactive state ----
   const state = {
-    group:null, nodes:[], links:[], spheres:[], edges:null, glow:null
+    group:null, nodes:[], links:[], spheres:[], edges:null, glow:null,
+    levels:[], roots:[]
   };
 
   // seedable RNG
@@ -183,13 +219,16 @@ try {
   // build / rebuild graph
   function buildGraph(params){
     const {
-      initialDonors=80, extraProb=0.3, sphereRadius=260, childJitter=28, seed=''
+      initialDonors=80,
+      plusDepth=6, plusProb=0.8,
+      extraProbRoot=0.3, extraDepth=3, extraContProb=0.75,
+      sphereRadius=260, childJitter=28, seed=''
     } = params;
 
     // clean previous
     if(state.group){ scene.remove(state.group); dispose(state.group); }
     state.group = new THREE.Group(); scene.add(state.group);
-    state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null;
+    state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[];
     if(state.glow){ scene.remove(state.glow); dispose(state.glow); state.glow=null; }
 
     const rand = makeRNG(seed);
@@ -199,23 +238,43 @@ try {
 
     let id=0;
     function addNode(type,parent=null){
-      const n={id:id++,type,parent,children:[]}; state.nodes.push(n);
-      if(parent!=null){ state.links.push({source:parent,target:n.id}); state.nodes[parent].children.push(n.id); }
+      const n={id:id++,type,parent,children:[]};
+      state.nodes.push(n);
+      if(parent!=null){
+        state.links.push({source:parent,target:n.id});
+        state.nodes[parent].children.push(n.id);
+      }
       return n;
     }
 
-    // seeds
-    for(let i=0;i<initialDonors;i++) addNode('dark', null);
+    // roots
+    for(let i=0;i<initialDonors;i++){ const r = addNode('dark', null); state.roots.push(r.id); }
 
-    // each dark -> one light; some -> green + red
-    for(let i=0;i<initialDonors;i++){
-      const d=i; addNode('light', d);
-      if(rand() < extraProb){ const g=addNode('green', d); addNode('red', g.id); }
+    // per-root structures
+    function growChain(startId, nodeType, maxDepth, contProb){
+      let depth=0, parentId=startId, lastId=null;
+      while(depth < maxDepth && rand() < contProb){
+        const child = addNode(nodeType, parentId);
+        lastId = child.id;
+        parentId = child.id;
+        depth++;
+      }
+      return lastId;
     }
-    // each light -> one more light
-    state.nodes.filter(n=>n.type==='light').forEach(l => addNode('light', l.id));
 
-    // place: fibonacci sphere for darks; children near parent
+    for(let r=0;r<initialDonors;r++){
+      // +1 chain
+      const first = addNode('light', r);
+      growChain(first.id, 'light', Math.max(0, plusDepth-1), plusProb);
+
+      // extra branch (green -> red chain)
+      if(rand() < extraProbRoot){
+        const g = addNode('green', r);
+        growChain(g.id, 'red', extraDepth, extraContProb);
+      }
+    }
+
+    // layout: fibonacci sphere for roots; children near parent
     function fibSphere(n,r=sphereRadius){
       const pts=[], phi=Math.PI*(3-Math.sqrt(5));
       for(let i=0;i<n;i++){
@@ -226,11 +285,12 @@ try {
       }
       return pts;
     }
-    const dark = state.nodes.filter(n=>n.type==='dark'), pts = fibSphere(dark.length, sphereRadius);
-    dark.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
+    const darkNodes = state.nodes.filter(n=>n.type==='dark');
+    const pts = fibSphere(darkNodes.length, sphereRadius);
+    darkNodes.forEach((n,i)=>{ n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z; });
     state.nodes.forEach(n=>{
       if(n.type!=='dark'){
-        const p = state.nodes.find(x=>x.id===n.parent) || {x:0,y:0,z:0};
+        const p = state.nodes[n.parent] || {x:0,y:0,z:0};
         const j = ()=> (rand()*2-1)*childJitter;
         n.x = p.x + j(); n.y = p.y + j(); n.z = p.z + j();
       }
@@ -251,60 +311,113 @@ try {
     // draw edges
     const pos = new Float32Array(state.links.length*6); let k=0;
     state.links.forEach(l=>{
-      const s=state.nodes.find(n=>n.id===l.source), t=state.nodes.find(n=>n.id===l.target);
+      const s=state.nodes[l.source], t=state.nodes[l.target];
       pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;
     });
     const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
     state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE,transparent:true,opacity:0.35}));
     state.group.add(state.edges);
+
+    // compute levels (depth from root) and metrics
+    computeLevelsAndMetrics();
+    updateMetricsUI();
   }
 
-  // highlight logic (uses current state)
-  let dragging=false;
-  controls.addEventListener('start', ()=> dragging=true);
-  controls.addEventListener('end', ()=> dragging=false);
+  function computeLevelsAndMetrics(){
+    state.levels = new Array(state.nodes.length).fill(-1);
+    let maxDepth = 0;
+    state.roots.forEach(rootId=>{
+      const q=[rootId]; state.levels[rootId]=0;
+      while(q.length){
+        const cur=q.shift();
+        const lvl = state.levels[cur];
+        maxDepth = Math.max(maxDepth, lvl);
+        state.nodes[cur].children.forEach(ch=>{
+          if(state.levels[ch]===-1){ state.levels[ch]=lvl+1; q.push(ch); }
+        });
+      }
+    });
+    state.maxObservedDepth = maxDepth;
+    state.totalNodes = state.nodes.length;
+    state.totalLinks = state.links.length;
+    state.leafCount = state.nodes.filter(n=>n.children.length===0).length;
+    state.avgChildrenAtRoot = state.roots.reduce((acc,r)=>acc+state.nodes[r].children.length,0)/Math.max(1,state.roots.length);
 
-  const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
-  function clearHi(){
-    if(state.glow){ state.group.remove(state.glow); dispose(state.glow); state.glow=null; }
-    state.spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
-    if(state.edges) state.edges.material.opacity=0.35;
-  }
-  function highlight(startId){
-    clearHi();
-    const keep=new Set([startId]), q=[startId];
-    while(q.length){
-      const cur=q.shift();
-      state.links.filter(l=>l.source===cur).forEach(l=>{
-        if(!keep.has(l.target)){ keep.add(l.target); q.push(l.target); }
-      });
+    // longest +1 chain (light) from any root
+    function lightChainLenFrom(rootId){
+      const firstLight = state.nodes[rootId].children.map(id=>state.nodes[id]).find(n=>n.type==='light');
+      if(!firstLight) return 0;
+      let len=1, cur=firstLight;
+      while(true){
+        const next = cur.children.map(id=>state.nodes[id]).find(n=>n.type==='light');
+        if(next){ len++; cur=next; } else break;
+      }
+      return len;
     }
-    state.spheres.forEach(m=>{
-      const on=keep.has(m.userData.id); m.material.transparent=true; m.material.opacity=on?1:0.12;
-    });
-    if(state.edges) state.edges.material.opacity=0.08;
-
-    const kept=state.links.filter(l=> keep.has(l.source)&&keep.has(l.target));
-    const gpos=new Float32Array(kept.length*6); let i=0;
-    kept.forEach(l=>{
-      const s=state.nodes.find(n=>n.id===l.source), t=state.nodes.find(n=>n.id===l.target);
-      gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z;
-    });
-    const ggeo=new THREE.BufferGeometry(); ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
-    state.glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:0x06b6d4, transparent:true, opacity:0.95}));
-    state.group.add(state.glow);
+    state.longestLightChain = state.roots.reduce((m,r)=>Math.max(m, lightChainLenFrom(r)), 0);
   }
-  function onPointer(ev){
-    if(dragging) return; // don't click-select after a drag
+
+  // highlight logic (click/tap) — robust click detection (no accidental drags)
+  const ray=new THREE.Raycaster(), mouse=new THREE.Vector2();
+  let down={x:0,y:0}, moved=false;
+  renderer.domElement.addEventListener('pointerdown', (ev)=>{ down.x=ev.clientX; down.y=ev.clientY; moved=false; });
+  renderer.domElement.addEventListener('pointermove', (ev)=>{
+    if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y) > 6) moved=true;
+  });
+  renderer.domElement.addEventListener('pointerup', (ev)=>{
+    if(moved) return; // treat as drag, not click
     const rect=renderer.domElement.getBoundingClientRect();
     const px=(ev.clientX-rect.left)/rect.width;
     const py=(ev.clientY-rect.top)/rect.height;
     mouse.x=px*2-1; mouse.y=-(py*2-1);
     ray.setFromCamera(mouse,camera);
     const hits=ray.intersectObjects(state.spheres,true);
-    if(hits.length){ highlight(hits[0].object.userData.id); } else { clearHi(); }
+    if(hits.length){ const id=hits[0].object.userData.id; highlight(id); }
+    else { clearHi(); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); }
+  }, {passive:true});
+
+  function clearHi(){
+    if(state.glow){ state.group.remove(state.glow); dispose(state.glow); state.glow=null; }
+    state.spheres.forEach(m=>{ m.material.transparent=false; m.material.opacity=1; });
+    if(state.edges) state.edges.material.opacity=0.35;
   }
-  renderer.domElement.addEventListener('pointerup', onPointer, {passive:true});
+
+  function highlight(startId){
+    clearHi();
+    // BFS from clicked node to get subtree + levels
+    const keep=new Set([startId]), q=[{id:startId, lvl:0}];
+    const perLevelCounts = [];
+    while(q.length){
+      const {id,lvl} = q.shift();
+      perLevelCounts[lvl] = (perLevelCounts[lvl]||0)+1;
+      state.nodes[id].children.forEach(ch=>{
+        if(!keep.has(ch)){ keep.add(ch); q.push({id:ch,lvl:lvl+1}); }
+      });
+    }
+    const depth = perLevelCounts.length-1;
+    const subtreeSize = keep.size;
+    const leaves = [...keep].filter(i=> state.nodes[i].children.length===0).length;
+
+    // dim others
+    state.spheres.forEach(m=>{
+      const on=keep.has(m.userData.id);
+      m.material.transparent=true; m.material.opacity=on?1:0.12;
+    });
+    if(state.edges) state.edges.material.opacity=0.08;
+
+    // bright lines for kept links
+    const kept=state.links.filter(l=> keep.has(l.source)&&keep.has(l.target));
+    const gpos=new Float32Array(kept.length*6); let i=0;
+    kept.forEach(l=>{
+      const s=state.nodes[l.source], t=state.nodes[l.target];
+      gpos[i++]=s.x; gpos[i++]=s.y; gpos[i++]=s.z; gpos[i++]=t.x; gpos[i++]=t.y; gpos[i++]=t.z;
+    });
+    const ggeo=new THREE.BufferGeometry(); ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
+    state.glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:0x06b6d4, transparent:true, opacity:0.95}));
+    state.group.add(state.glow);
+
+    setStatus(`selected donor #${startId} — subtree size ${subtreeSize}, depth ${depth}, leaves ${leaves}; levels: ${perLevelCounts.map((n,i)=>i+':'+n).join('  ')}`);
+  }
 
   // animation loop
   function loop(){ controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop); }
@@ -313,36 +426,66 @@ try {
   // ---- UI wiring ----
   const $ = (id)=> document.getElementById(id);
   const donors=$('donors'), donorsOut=$('donorsOut');
+  const plusDepth=$('plusDepth'), plusDepthOut=$('plusDepthOut');
+  const plusProb=$('plusProb'), plusProbOut=$('plusProbOut');
   const extra=$('extra'), extraOut=$('extraOut');
+  const extraDepth=$('extraDepth'), extraDepthOut=$('extraDepthOut');
+  const extraProb=$('extraProb'), extraProbOut=$('extraProbOut');
   const radius=$('radius'), radiusOut=$('radiusOut');
   const jitter=$('jitter'), jitterOut=$('jitterOut');
   const seed=$('seed'), auto=$('auto');
-  const rebuildBtn=$('rebuildBtn'), resetViewBtn=$('resetViewBtn');
+  const rebuildBtn=$('rebuildBtn'), resetViewBtn=$('resetViewBtn'), clearHiBtn=$('clearHiBtn');
+  const metricsDiv = $('metrics');
 
   function syncOutputs(){
     donorsOut.textContent=donors.value;
+    plusDepthOut.textContent=plusDepth.value;
+    plusProbOut.textContent=Number(plusProb.value).toFixed(2);
     extraOut.textContent=Number(extra.value).toFixed(2);
+    extraDepthOut.textContent=extraDepth.value;
+    extraProbOut.textContent=Number(extraProb.value).toFixed(2);
     radiusOut.textContent=radius.value;
     jitterOut.textContent=jitter.value;
   }
   function getParams(){
     return {
       initialDonors: parseInt(donors.value,10),
-      extraProb: Math.max(0, Math.min(1, parseFloat(extra.value))),
+      plusDepth: parseInt(plusDepth.value,10),
+      plusProb: clamp01(parseFloat(plusProb.value)),
+      extraProbRoot: clamp01(parseFloat(extra.value)),
+      extraDepth: parseInt(extraDepth.value,10),
+      extraContProb: clamp01(parseFloat(extraProb.value)),
       sphereRadius: parseInt(radius.value,10),
       childJitter: parseInt(jitter.value,10),
       seed: (seed.value || '').trim()
     };
+  }
+  function clamp01(x){ return isFinite(x) ? Math.max(0, Math.min(1, x)) : 0; }
+
+  function updateMetricsUI(){
+    const m = {
+      roots: state.roots.length,
+      nodes: state.totalNodes,
+      links: state.totalLinks,
+      maxDepth: state.maxObservedDepth,
+      leaves: state.leafCount,
+      avgChildrenAtRoot: state.avgChildrenAtRoot,
+      longestLightChain: state.longestLightChain
+    };
+    metricsDiv.innerHTML =
+      `<div><b>Roots:</b> ${m.roots} &nbsp; <b>Nodes:</b> ${m.nodes} &nbsp; <b>Links:</b> ${m.links}</div>
+       <div><b>Max depth:</b> ${m.maxDepth} &nbsp; <b>Leaves:</b> ${m.leaves}</div>
+       <div><b>Avg children/root:</b> ${m.avgChildrenAtRoot.toFixed(2)} &nbsp; <b>Longest +1 chain:</b> ${m.longestLightChain}</div>`;
   }
 
   let debounceTimer=null;
   function scheduleRebuild(){
     if(!auto.checked) return;
     clearTimeout(debounceTimer);
-    debounceTimer=setTimeout(()=>{ setStatus('rebuilding…'); buildGraph(getParams()); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); }, 200);
+    debounceTimer=setTimeout(()=>{ setStatus('rebuilding…'); buildGraph(getParams()); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); }, 150);
   }
 
-  [donors,extra,radius,jitter,seed].forEach(el=>{
+  [donors,plusDepth,plusProb,extra,extraDepth,extraProb,radius,jitter,seed].forEach(el=>{
     el.addEventListener('input', ()=>{ syncOutputs(); scheduleRebuild(); });
     el.addEventListener('change', ()=>{ syncOutputs(); scheduleRebuild(); });
   });
@@ -351,6 +494,7 @@ try {
     setStatus('donor map ready — rotate/zoom, tap/click to highlight');
   });
   resetViewBtn.addEventListener('click', ()=> resetView());
+  clearHiBtn.addEventListener('click', ()=> { clearHi(); setStatus('donor map ready — rotate/zoom, tap/click to highlight'); });
 
   // initial build
   syncOutputs();
