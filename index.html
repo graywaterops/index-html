@@ -6,24 +6,20 @@
 <title>Smart Coin™ — Donor Universe (Bloom + Live Totals)</title>
 <style>
   :root{ --bg:#000; --panel:#111826; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d; --accent:#6ee7ff; }
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
-    font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   #app{position:relative;width:100%;height:100vh;min-height:560px;background:#000}
 
   .chip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;border:1px solid #2f3b66}
   #legend{position:fixed;left:10px;top:10px;z-index:8;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;color:#cfe1ff;opacity:.92}
   #status{position:fixed;left:10px;bottom:10px;z-index:8;background:var(--panel);color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;max-width:78vw;white-space:pre-wrap}
 
-  /* tiny buttons */
   #buttons{position:fixed;right:10px;top:10px;z-index:9;display:flex;gap:8px}
   .btn{background:var(--panel);color:#eaf0ff;border:1px solid var(--border);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer}
 
-  /* help */
   #help{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);
     border-radius:10px;padding:10px 12px;font-size:12px;display:none;max-width:360px}
   #help.open{display:block}
 
-  /* tooltip */
   #tip{position:fixed;pointer-events:none;z-index:11;background:#0b1020;border:1px solid #223054;border-radius:6px;
     padding:6px 8px;font-size:12px;display:none;color:#dce6ff}
 
@@ -41,20 +37,9 @@
   @media (max-width:768px){
     #legend{font-size:11px}
     .btn{padding:8px}
-    #counters{top:auto;bottom:38px} /* keep away from notch */
+    #counters{top:auto;bottom:38px}
   }
 </style>
-
-<!-- Import-map + shim so "three" module works in all browsers -->
-<script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
 </head>
 <body>
 <div id="app"></div>
@@ -87,301 +72,312 @@
 <div id="status">Status: loading…</div>
 
 <script type="module">
-import * as THREE from "three";
-import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+/* ---------- status + robust loader ---------- */
+const statusEl=document.getElementById('status');
+const setStatus=(m)=>statusEl.textContent='Status: '+m;
+const showError=(e)=>{ setStatus('Error: '+(e?.message||e)); console.error(e); };
 
-/* ---------- helpers ---------- */
-const $ = (id)=>document.getElementById(id);
-const statusEl = $('status');
-const setStatus = (m)=> statusEl.textContent = 'Status: ' + m;
-const tipEl=$('tip'), tlFill=$('tlFill'), coinsVal=$('coinsVal'), raisedVal=$('raisedVal');
-const fmtMoney = (n)=> n.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
-const easeOutCubic=t=>1-Math.pow(1-Math.min(1,Math.max(0,t)),3);
-
-/* ---------- scene ---------- */
-const rootEl=$('app'); const helpEl=$('help');
-const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setClearColor(0x000000,1); renderer.domElement.style.touchAction='none'; rootEl.appendChild(renderer.domElement);
-const scene=new THREE.Scene(); scene.background=new THREE.Color(0x000000);
-const camera=new THREE.PerspectiveCamera(55,1,0.1,5000);
-const controls=new OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.05;
-scene.add(new THREE.AmbientLight(0xffffff,0.9)); const dir=new THREE.DirectionalLight(0xffffff,0.55); dir.position.set(300,500,400); scene.add(dir);
-function size(){const w=rootEl.clientWidth||window.innerWidth; const h=rootEl.clientHeight||Math.round(window.innerHeight*0.7); return {w:Math.max(1,w),h:Math.max(1,h)}}
-function resize(){const {w,h}=size(); camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h,false)} window.addEventListener('resize',resize);
-function resetView(){camera.position.set(0,0,950); controls.target.set(0,0,0); controls.update()} resetView(); resize();
-
-/* ---------- state ---------- */
-const state={
-  group:null,nodes:[],links:[],spheres:[],edges:null,edgesGrow:null,glowDesc:null,roots:[],capped:false,
-  sortedEdgeBirths:[], maxBirth:0,
-  birthsSorted:[], giftPrefix:[]  // for fast counters
-};
-const BLOOM={playing:false,t:0,duration:10000,start:0};
-
-/* ---------- RNG + donation distribution ---------- */
-function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++) h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19; return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
-function mulberry32(a){return function(){var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return((t^t>>>14)>>>0)/4294967296 }}
-function makeRNG(seedStr){if(!seedStr) return Math.random; const seed=xmur3(String(seedStr))(); return mulberry32(seed)}
-function roundTo(v,step){return Math.round(v/step)*step}
-/* Heavily right-skewed gift distribution:
-   - 60% exactly $50
-   - 18% $50–$150
-   - 12% $150–$500
-   - 8%  $500–$2,000
-   - 2%  $2,000–$5,000  */
-function sampleGift(rand){
-  const u=rand();
-  if(u<0.60) return 50;
-  if(u<0.78) return roundTo(50 + rand()*100, 5);
-  if(u<0.90) return roundTo(150 + rand()*350, 10);
-  if(u<0.98) return roundTo(500 + rand()*1500, 25);
-  return roundTo(2000 + rand()*3000, 50);
+async function importThree(){
+  try {
+    setStatus('loading engine (jsDelivr)…');
+    const THREE = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
+    const { OrbitControls } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js');
+    return { THREE, OrbitControls };
+  } catch (e1) {
+    console.warn('jsDelivr failed, trying unpkg', e1);
+    setStatus('loading engine (unpkg)…');
+    const THREE = await import('https://unpkg.com/three@0.160.0/build/three.module.js');
+    const { OrbitControls } = await import('https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js');
+    return { THREE, OrbitControls };
+  }
 }
 
-/* ---------- parameters: start with 250 roots ---------- */
-const P={
-  roots:250,
-  lightDepth:10, lightProb:.85, lightFan:1.5, lightDecay:.90,
-  extraDepth:9,  extraProb:.85, extraFan:1.8, extraDecay:.88,
-  radius:800, jitter:36, cap:20000, seed:'universe-250-v1'
-};
+(async () => {
+try{
+  const { THREE, OrbitControls } = await importThree();
 
-/* ---------- build with one-light-per-parent + gifts + births ---------- */
-function buildGraph(P){
-  const rand=makeRNG(P.seed), randJ=makeRNG(P.seed+'j'), randGift=makeRNG(P.seed+'g'); state.capped=false;
-  if(state.group){scene.remove(state.group); dispose(state.group);}
-  state.group=new THREE.Group(); scene.add(state.group);
-  state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.edgesGrow=null; state.roots=[]; state.birthsSorted=[]; state.giftPrefix=[]; clearHi();
-
-  const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444, COLOR_EDGE=0x5b6b95;
-  const ROOT_STAGGER=140, STEP_LIGHT=560, STEP_GREEN=420, STEP_RED=300, RAMP_MS=420;
-
-  let id=0;
-  function addNode(type,parent=null,branch='light',bdepth=0,birth=0){
-    if(state.nodes.length>=P.cap){state.capped=true; return null;}
-    const gift = sampleGift(randGift);             // donor’s personal gift (excl. coin)
-    const n={id:id++,type,parent,children:[],branch,bdepth,birth,gift};
-    state.nodes.push(n);
-    if(parent!=null){state.links.push({source:parent,target:n.id}); state.nodes[parent].children.push(n.id);}
-    return n;
+  /* ---------- utilities ---------- */
+  const $ = (id)=>document.getElementById(id);
+  const tipEl=$('tip'), tlFill=$('tlFill'), coinsVal=$('coinsVal'), raisedVal=$('raisedVal');
+  const fmtMoney = (n)=> n.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
+  const easeOutCubic=t=>1-Math.pow(1-Math.min(1,Math.max(0,t)),3);
+  function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19;return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
+  function mulberry32(a){return function(){var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return((t^t>>>14)>>>0)/4294967296 }}
+  function makeRNG(seedStr){if(!seedStr) return Math.random; const seed=xmur3(String(seedStr))(); return mulberry32(seed)}
+  function roundTo(v,step){return Math.round(v/step)*step}
+  // heavily right-skewed gift distribution
+  function sampleGift(rand){
+    const u=rand();
+    if(u<0.60) return 50;
+    if(u<0.78) return roundTo(50 + rand()*100, 5);
+    if(u<0.90) return roundTo(150 + rand()*350, 10);
+    if(u<0.98) return roundTo(500 + rand()*1500, 25);
+    return roundTo(2000 + rand()*3000, 50);
   }
+  function dispose3D(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose(); if(o.material){Array.isArray(o.material)?o.material.forEach(m=>m.dispose()):o.material.dispose()}})}
 
-  // roots
-  for(let i=0;i<P.roots;i++){
-    const b = i*ROOT_STAGGER + rand()*80;
-    const r=addNode('dark',null,'light',0,b);
-    if(r) state.roots.push(r.id);
-    if(state.capped) break;
-  }
+  /* ---------- scene ---------- */
+  const rootEl=$('app'); const helpEl=$('help');
+  const renderer=new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(Math.min(2,window.devicePixelRatio||1)); renderer.setClearColor(0x000000,1); renderer.domElement.style.touchAction='none'; rootEl.appendChild(renderer.domElement);
+  const scene=new THREE.Scene(); scene.background=new THREE.Color(0x000000);
+  const camera=new THREE.PerspectiveCamera(55,1,0.1,5000);
+  const controls=new OrbitControls(camera,renderer.domElement); controls.enableDamping=true; controls.dampingFactor=0.05;
+  scene.add(new THREE.AmbientLight(0xffffff,0.9)); const dir=new THREE.DirectionalLight(0xffffff,0.55); dir.position.set(300,500,400); scene.add(dir);
+  function size(){const w=rootEl.clientWidth||window.innerWidth; const h=rootEl.clientHeight||Math.round(window.innerHeight*0.7); return {w:Math.max(1,w),h:Math.max(1,h)}}
+  function resize(){const {w,h}=size(); camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h,false)}
+  window.addEventListener('resize',resize);
+  function resetView(){camera.position.set(0,0,950); controls.target.set(0,0,0); controls.update()}
+  resetView(); resize();
 
-  // BFS growth
-  const q=state.roots.map(id=>({id}));
-  while(q.length && !state.capped){
-    const pid=q.shift().id; const p=state.nodes[pid];
+  /* ---------- state ---------- */
+  const state={
+    group:null,nodes:[],links:[],spheres:[],edges:null,edgesGrow:null,glowDesc:null,roots:[],capped:false,
+    sortedEdgeBirths:[], maxBirth:0,
+    birthsSorted:[], giftPrefix:[]
+  };
+  const BLOOM={playing:false,t:0,duration:10000,start:0};
 
-    if(p.branch==='light' && p.bdepth < P.lightDepth){
-      const scale=Math.pow(P.lightDecay, Math.max(0,p.bdepth));
-      if(rand() < P.lightProb*scale){
-        let k = poisson(Math.max(0, P.lightFan*scale), rand);
-        if(k>0){
-          const lbirth = p.birth + STEP_LIGHT*(0.8+0.4*rand());
-          const lightChild=addNode('light', pid, 'light', p.bdepth+1, lbirth);
-          if(lightChild) q.push({id:lightChild.id});
-          for(let i=1;i<k && !state.capped;i++){
-            const gbirth = p.birth + STEP_GREEN*(0.65+0.5*rand());
-            const g=addNode('green', pid, 'extra', 1, gbirth);
-            if(g) q.push({id:g.id});
+  /* ---------- parameters: 250 roots ---------- */
+  const P={
+    roots:250,
+    lightDepth:10, lightProb:.85, lightFan:1.5, lightDecay:.90,
+    extraDepth:9,  extraProb:.85, extraFan:1.8, extraDecay:.88,
+    radius:800, jitter:36, cap:20000, seed:'universe-250-v2'
+  };
+
+  /* ---------- build graph (one-light-per-parent) + births + gifts ---------- */
+  function buildGraph(P){
+    const rand=makeRNG(P.seed), randJ=makeRNG(P.seed+'j'), randGift=makeRNG(P.seed+'g');
+    state.capped=false;
+    if(state.group){scene.remove(state.group); dispose3D(state.group);}
+    state.group=new THREE.Group(); scene.add(state.group);
+    state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.edgesGrow=null; state.roots=[]; state.birthsSorted=[]; state.giftPrefix=[]; if(state.glowDesc){state.group.remove(state.glowDesc); dispose3D(state.glowDesc); state.glowDesc=null;}
+
+    const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444, COLOR_EDGE=0x5b6b95;
+    const ROOT_STAGGER=140, STEP_LIGHT=560, STEP_GREEN=420, STEP_RED=300;
+
+    let id=0;
+    function addNode(type,parent=null,branch='light',bdepth=0,birth=0){
+      if(state.nodes.length>=P.cap){state.capped=true; return null;}
+      const gift=sampleGift(randGift);
+      const n={id:id++,type,parent,children:[],branch,bdepth,birth,gift};
+      state.nodes.push(n);
+      if(parent!=null){state.links.push({source:parent,target:n.id}); state.nodes[parent].children.push(n.id);}
+      return n;
+    }
+
+    // roots
+    for(let i=0;i<P.roots;i++){
+      const b=i*ROOT_STAGGER + rand()*80;
+      const r=addNode('dark',null,'light',0,b);
+      if(r) state.roots.push(r.id);
+      if(state.capped) break;
+    }
+
+    // BFS growth
+    const q=state.roots.map(id=>({id}));
+    while(q.length && !state.capped){
+      const pid=q.shift().id; const p=state.nodes[pid];
+
+      if(p.branch==='light' && p.bdepth < P.lightDepth){
+        const scale=Math.pow(P.lightDecay, Math.max(0,p.bdepth));
+        if(rand() < P.lightProb*scale){
+          let k = poisson(Math.max(0, P.lightFan*scale), rand);
+          if(k>0){
+            const lbirth = p.birth + STEP_LIGHT*(0.8+0.4*rand());
+            const lightChild=addNode('light', pid, 'light', p.bdepth+1, lbirth);
+            if(lightChild) q.push({id:lightChild.id});
+            for(let i=1;i<k && !state.capped;i++){
+              const gbirth = p.birth + STEP_GREEN*(0.65+0.5*rand());
+              const g=addNode('green', pid, 'extra', 1, gbirth);
+              if(g) q.push({id:g.id});
+            }
+          }
+        }
+      } else if(p.branch==='extra' && p.bdepth < P.extraDepth){
+        const scale=Math.pow(P.extraDecay, Math.max(0,p.bdepth-1));
+        if(rand() < P.extraProb*scale){
+          let k = poisson(Math.max(0, P.extraFan*scale), rand);
+          for(let i=0;i<k && !state.capped;i++){
+            const rbirth = p.birth + STEP_RED*(0.6+0.5*rand());
+            const r=addNode('red', pid, 'extra', p.bdepth+1, rbirth);
+            if(r) q.push({id:r.id});
           }
         }
       }
-    } else if(p.branch==='extra' && p.bdepth < P.extraDepth){
-      const scale=Math.pow(P.extraDecay, Math.max(0,p.bdepth-1));
-      if(rand() < P.extraProb*scale){
-        let k = poisson(Math.max(0, P.extraFan*scale), rand);
-        for(let i=0;i<k && !state.capped;i++){
-          const rbirth = p.birth + STEP_RED*(0.6+0.5*rand());
-          const r=addNode('red', pid, 'extra', p.bdepth+1, rbirth);
-          if(r) q.push({id:r.id});
-        }
+    }
+
+    // layout
+    function fibSphere(n,r=P.radius){
+      const pts=[],phi=Math.PI*(3-Math.sqrt(5));
+      for(let i=0;i<n;i++){const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i; pts.push(new THREE.Vector3(Math.cos(th)*rad*r, y*r, Math.sin(th)*rad*r));}
+      return pts;
+    }
+    const dark=state.nodes.filter(n=>n.type==='dark'); const pts=fibSphere(dark.length,P.radius);
+    dark.forEach((n,i)=>{n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z;});
+    state.nodes.forEach(n=>{
+      if(n.type!=='dark'){
+        const p=state.nodes[n.parent]||{x:0,y:0,z:0};
+        const spread=P.jitter*(1+0.04*Math.max(0,n.bdepth-1));
+        const j=()=> (randJ()*2-1)*spread;
+        n.x=p.x+j(); n.y=p.y+j(); n.z=p.z+j();
       }
-    }
+    });
+
+    // nodes (start invisible; Bloom scales them in)
+    const col=t=>t==='dark'?COLOR_DARK:t==='light'?COLOR_LIGHT:t==='green'?COLOR_GREEN:COLOR_RED;
+    state.nodes.forEach(n=>{
+      const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
+      const mat=new THREE.MeshStandardMaterial({color:col(n.type), metalness:.15, roughness:.45, transparent:true, opacity:0});
+      const mesh=new THREE.Mesh(new THREE.SphereGeometry(size,18,18), mat);
+      mesh.position.set(n.x,n.y,n.z); mesh.userData.id=n.id; mesh.userData.birth=n.birth; mesh.userData.ramp=420; mesh.scale.setScalar(0.001);
+      state.group.add(mesh); state.spheres.push(mesh);
+    });
+
+    // faint static edges
+    const pos=new Float32Array(state.links.length*6); let k=0;
+    state.links.forEach(l=>{const s=state.nodes[l.source], t=state.nodes[l.target];
+      pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;});
+    const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+    state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE, transparent:true, opacity:0.12}));
+    state.group.add(state.edges);
+
+    // growing cyan edges ordered by child's birth
+    const sorted=state.links.slice().sort((a,b)=> state.nodes[a.target].birth - state.nodes[b.target].birth);
+    const posGrow=new Float32Array(sorted.length*6); let g=0; const births=new Float32Array(sorted.length);
+    sorted.forEach((l,i)=>{const s=state.nodes[l.source], t=state.nodes[l.target];
+      posGrow[g++]=s.x; posGrow[g++]=s.y; posGrow[g++]=s.z; posGrow[g++]=t.x; posGrow[g++]=t.y; posGrow[g++]=t.z; births[i]=state.nodes[l.target].birth;});
+    const growGeo=new THREE.BufferGeometry(); growGeo.setAttribute('position', new THREE.BufferAttribute(posGrow,3));
+    growGeo.setDrawRange(0,0);
+    state.edgesGrow=new THREE.LineSegments(growGeo, new THREE.LineBasicMaterial({color:0x6ee7ff, transparent:true, opacity:0.9}));
+    state.group.add(state.edgesGrow);
+    state.sortedEdgeBirths = births;
+
+    // precompute births & prefix sums for counters
+    const byBirth = state.nodes.slice().sort((a,b)=>a.birth-b.birth);
+    state.birthsSorted = byBirth.map(n=>n.birth);
+    let acc=0; state.giftPrefix = byBirth.map(n=>{ acc += n.gift; return acc; });
+
+    state.maxBirth = state.nodes.reduce((m,n)=>Math.max(m,n.birth), 0);
+    BLOOM.duration = state.maxBirth + 2000;
+    BLOOM.t=0; BLOOM.playing=true; BLOOM.start=performance.now(); // autoplay
+    tlFill.style.width='0%';
+
+    setStatus(`ready — ${state.roots.length} roots, ${state.nodes.length} donors. Counters live.`);
   }
 
-  // layout
-  function fibSphere(n,r=P.radius){
-    const pts=[],phi=Math.PI*(3-Math.sqrt(5));
-    for(let i=0;i<n;i++){const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i; pts.push(new THREE.Vector3(Math.cos(th)*rad*r, y*r, Math.sin(th)*rad*r));}
-    return pts;
+  /* ---------- counters ---------- */
+  function upperBound(arr,val){let lo=0,hi=arr.length; while(lo<hi){const mid=(lo+hi)>>1; if(arr[mid]<=val) lo=mid+1; else hi=mid;} return lo;}
+  function updateCounters(t){
+    const idx = upperBound(state.birthsSorted, t); // coins so far
+    const coins = idx;
+    const gifts = idx>0 ? state.giftPrefix[idx-1] : 0;
+    const raised = coins*50 + gifts;
+    coinsVal.textContent = coins.toLocaleString('en-US');
+    raisedVal.textContent = fmtMoney(Math.round(raised));
   }
-  const dark=state.nodes.filter(n=>n.type==='dark'); const pts=fibSphere(dark.length,P.radius);
-  dark.forEach((n,i)=>{n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z;});
-  state.nodes.forEach(n=>{
-    if(n.type!=='dark'){
-      const p=state.nodes[n.parent]||{x:0,y:0,z:0};
-      const spread=P.jitter*(1+0.04*Math.max(0,n.bdepth-1));
-      const j=()=> (randJ()*2-1)*spread;
-      n.x=p.x+j(); n.y=p.y+j(); n.z=p.z+j();
+
+  /* ---------- highlight (influence so far) ---------- */
+  function clearHighlight(){
+    if(state.glowDesc){ state.group.remove(state.glowDesc); dispose3D(state.glowDesc); state.glowDesc=null; }
+    state.spheres.forEach(m=>{m.material.transparent=true; m.material.opacity=1});
+    if(state.edges) state.edges.material.opacity=0.12;
+  }
+  function highlight(startId){
+    clearHighlight();
+    const keep=new Set([startId]), q=[startId];
+    while(q.length){const cur=q.shift(); state.nodes[cur].children.forEach(ch=>{if(!keep.has(ch)){keep.add(ch); q.push(ch)}})}
+    state.spheres.forEach(m=>{const on=keep.has(m.userData.id); m.material.transparent=true; m.material.opacity=on?1:0.10;});
+    if(state.edges){
+      const kept=state.links.filter(l=> keep.has(l.source)&&keep.has(l.target));
+      const dpos=new Float32Array(kept.length*6); let i=0;
+      kept.forEach(l=>{const s=state.nodes[l.source],t=state.nodes[l.target];
+        dpos[i++]=s.x; dpos[i++]=s.y; dpos[i++]=s.z; dpos[i++]=t.x; dpos[i++]=t.y; dpos[i++]=t.z;});
+      const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(dpos,3));
+      state.glowDesc=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({color:0x06b6d4,transparent:true,opacity:.95}));
+      state.group.add(state.glowDesc);
+      state.edges.material.opacity=0.06;
+    }
+    // influence so far (respect Bloom time)
+    const visible=[...keep].filter(id=> state.nodes[id].birth <= BLOOM.t);
+    const coins=visible.length;
+    const gifts=visible.reduce((s,id)=> s + state.nodes[id].gift, 0);
+    const raised=coins*50 + gifts;
+    const selfGift = state.nodes[startId].gift + 50;
+    const network = raised - selfGift;
+    setStatus(`selected #${startId} — direct ${fmtMoney(selfGift)} · constellation so far: ${coins-1} others raising ${fmtMoney(network)} (total ${fmtMoney(raised)})`);
+  }
+
+  /* ---------- Bloom tick ---------- */
+  function applyBloom(){
+    const t=BLOOM.t;
+    for(const m of state.spheres){
+      const n=state.nodes[m.userData.id];
+      const age=(t - n.birth)/(m.userData.ramp||400);
+      const a=Math.max(0, Math.min(1, easeOutCubic(age)));
+      if(a<=0){ m.visible=false; continue; }
+      m.visible=true; m.scale.setScalar(0.001 + a); m.material.opacity=a;
+    }
+    if(state.edgesGrow){
+      const arr=state.sortedEdgeBirths; let lo=0,hi=arr.length; while(lo<hi){const mid=(lo+hi)>>1; if(arr[mid]<=t) lo=mid+1; else hi=mid;}
+      state.edgesGrow.geometry.setDrawRange(0, lo*2);
+    }
+    updateCounters(t);
+    tlFill.style.width = `${Math.min(100,(t/BLOOM.duration)*100)}%`;
+  }
+
+  /* ---------- pointer + tooltip ---------- */
+  const ray=new THREE.Raycaster(), mouse=new THREE.Vector2(); let down={x:0,y:0}, moved=false;
+  renderer.domElement.addEventListener('pointerdown',ev=>{down.x=ev.clientX; down.y=ev.clientY; moved=false});
+  renderer.domElement.addEventListener('pointermove',ev=>{
+    if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y)>6) moved=true;
+    const rect=renderer.domElement.getBoundingClientRect(); mouse.x=((ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-((ev.clientY-rect.top)/rect.height)*2+1;
+    ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
+    if(hits.length){
+      const n=state.nodes[hits[0].object.userData.id];
+      tipEl.style.left=(ev.clientX+12)+'px'; tipEl.style.top=(ev.clientY+12)+'px';
+      tipEl.innerHTML = `${n.type.toUpperCase()} #${n.id}<br>gift ${fmtMoney(n.gift)} · children ${n.children.length}`;
+      tipEl.style.display='block';
+    } else tipEl.style.display='none';
+  });
+  renderer.domElement.addEventListener('pointerup',ev=>{
+    if(moved) return;
+    const rect=renderer.domElement.getBoundingClientRect();
+    mouse.x=((ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-((ev.clientY-rect.top)/rect.height)*2+1;
+    ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
+    if(hits.length){highlight(hits[0].object.userData.id)} else {clearHighlight()}
+  }, {passive:true});
+
+  /* ---------- buttons / keys ---------- */
+  document.getElementById('btnHelp').addEventListener('click', ()=> helpEl.classList.toggle('open'));
+  document.getElementById('btnBloom').addEventListener('click', ()=>{
+    BLOOM.playing=!BLOOM.playing;
+    if(BLOOM.playing){BLOOM.start=performance.now()-BLOOM.t; document.getElementById('btnBloom').textContent='⏸ Bloom';}
+    else {document.getElementById('btnBloom').textContent='⏵ Bloom';}
+  });
+  window.addEventListener('keydown',e=>{
+    if(e.key==='h'||e.key==='H') helpEl.classList.toggle('open');
+    if(e.key==='b'||e.key==='B'){
+      if(e.shiftKey){BLOOM.t=0; BLOOM.playing=false; document.getElementById('btnBloom').textContent='⏵ Bloom'; tlFill.style.width='0%';}
+      else {BLOOM.playing=!BLOOM.playing; document.getElementById('btnBloom').textContent=BLOOM.playing?'⏸ Bloom':'⏵ Bloom'; if(BLOOM.playing) BLOOM.start=performance.now()-BLOOM.t;}
     }
   });
 
-  // nodes (start invisible; Bloom scales them in)
-  const col=t=>t==='dark'?COLOR_DARK:t==='light'?COLOR_LIGHT:t==='green'?COLOR_GREEN:COLOR_RED;
-  state.nodes.forEach(n=>{
-    const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
-    const mat=new THREE.MeshStandardMaterial({color:col(n.type), metalness:.15, roughness:.45, transparent:true, opacity:0});
-    const mesh=new THREE.Mesh(new THREE.SphereGeometry(size,18,18), mat);
-    mesh.position.set(n.x,n.y,n.z); mesh.userData.id=n.id; mesh.userData.birth=n.birth; mesh.userData.ramp=420; mesh.scale.setScalar(0.001);
-    state.group.add(mesh); state.spheres.push(mesh);
-  });
-
-  // faint static edges
-  const pos=new Float32Array(state.links.length*6); let k=0;
-  state.links.forEach(l=>{const s=state.nodes[l.source], t=state.nodes[l.target];
-    pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;});
-  const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x5b6b95, transparent:true, opacity:0.12}));
-  state.group.add(state.edges);
-
-  // growing cyan edges (ordered by child's birth)
-  const sorted=state.links.slice().sort((a,b)=> state.nodes[a.target].birth - state.nodes[b.target].birth);
-  const posGrow=new Float32Array(sorted.length*6); let g=0; const births=new Float32Array(sorted.length);
-  sorted.forEach((l,i)=>{const s=state.nodes[l.source], t=state.nodes[l.target];
-    posGrow[g++]=s.x; posGrow[g++]=s.y; posGrow[g++]=s.z; posGrow[g++]=t.x; posGrow[g++]=t.y; posGrow[g++]=t.z; births[i]=state.nodes[l.target].birth;});
-  const growGeo=new THREE.BufferGeometry(); growGeo.setAttribute('position', new THREE.BufferAttribute(posGrow,3));
-  growGeo.setDrawRange(0,0);
-  const growMat=new THREE.LineBasicMaterial({color:0x6ee7ff, transparent:true, opacity:0.9});
-  state.edgesGrow=new THREE.LineSegments(growGeo, growMat); state.group.add(state.edgesGrow);
-  state.sortedEdgeBirths = births;
-
-  // precompute births & prefix sums for fast counters
-  const byBirth = state.nodes.slice().sort((a,b)=>a.birth-b.birth);
-  state.birthsSorted = byBirth.map(n=>n.birth);
-  let acc=0; state.giftPrefix = byBirth.map(n=>{ acc += n.gift; return acc; });
-
-  state.maxBirth = state.nodes.reduce((m,n)=>Math.max(m,n.birth), 0);
-  BLOOM.duration = state.maxBirth + 2000;
-  BLOOM.t=0; BLOOM.playing=true; BLOOM.start=performance.now(); // autoplay
-  tlFill.style.width='0%';
-
-  setStatus(`ready — ${state.roots.length} roots, ${state.nodes.length} donors. Counters live.`);
-}
-
-/* ---------- disposal ---------- */
-function dispose(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose(); if(o.material){Array.isArray(o.material)?o.material.forEach(m=>m.dispose()):o.material.dispose()}})}
-function clearHi(){ if(state.glowDesc){ state.group.remove(state.glowDesc); dispose(state.glowDesc); state.glowDesc=null; } state.spheres.forEach(m=>{m.material.transparent=true; m.material.opacity=1}); if(state.edges) state.edges.material.opacity=0.12; }
-
-/* ---------- counters (fast via binary search) ---------- */
-function upperBound(arr,val){let lo=0,hi=arr.length; while(lo<hi){const mid=(lo+hi)>>1; if(arr[mid]<=val) lo=mid+1; else hi=mid;} return lo;}
-function updateCounters(t){
-  const idx = upperBound(state.birthsSorted, t);              // coins visible so far
-  const coins = idx;
-  const gifts = idx>0 ? state.giftPrefix[idx-1] : 0;          // donation gifts so far
-  const raised = coins*50 + gifts;                            // coin sales + gifts
-  coinsVal.textContent = coins.toLocaleString('en-US');
-  raisedVal.textContent = fmtMoney(Math.round(raised));
-}
-
-/* ---------- highlight: influence so far ---------- */
-function highlight(startId){
-  clearHi();
-  const keep=new Set([startId]), q=[startId];
-  while(q.length){const cur=q.shift(); state.nodes[cur].children.forEach(ch=>{if(!keep.has(ch)){keep.add(ch); q.push(ch)}})}
-  // make bright
-  state.spheres.forEach(m=>{const on=keep.has(m.userData.id); m.material.transparent=true; m.material.opacity=on?1:0.10;});
-  // bright overlay edges
-  if(state.edges){
-    const kept=state.links.filter(l=> keep.has(l.source)&&keep.has(l.target));
-    const dpos=new Float32Array(kept.length*6); let i=0;
-    kept.forEach(l=>{const s=state.nodes[l.source],t=state.nodes[l.target];
-      dpos[i++]=s.x; dpos[i++]=s.y; dpos[i++]=s.z; dpos[i++]=t.x; dpos[i++]=t.y; dpos[i++]=t.z;});
-    const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(dpos,3));
-    state.glowDesc=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({color:0x06b6d4,transparent:true,opacity:.95}));
-    state.group.add(state.glowDesc);
-    state.edges.material.opacity=0.06;
+  /* ---------- loop & boot ---------- */
+  function loop(){
+    if(BLOOM.playing){
+      BLOOM.t = Math.min(BLOOM.duration, performance.now()-BLOOM.start);
+      if(BLOOM.t>=BLOOM.duration){ BLOOM.playing=false; document.getElementById('btnBloom').textContent='⏵ Bloom'; }
+    }
+    applyBloom();
+    controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop);
   }
-  // influence "so far" (respect Bloom time)
-  const visible = [...keep].filter(id=> state.nodes[id].birth <= BLOOM.t);
-  const coins = visible.length;
-  const gifts = visible.reduce((s,id)=> s + state.nodes[id].gift, 0);
-  const raised = coins*50 + gifts;
-  const selfGift = state.nodes[startId].gift + 50;
-  const network = raised - selfGift;
-  setStatus(`selected #${startId} — direct ${fmtMoney(selfGift)} · constellation so far: ${coins-1} others raising ${fmtMoney(network)} (total ${fmtMoney(raised)})`);
-}
+  loop();
+  buildGraph(P);
+  setStatus('ready — building donor universe…');
 
-/* ---------- Bloom tick ---------- */
-function applyBloom(){
-  const t=BLOOM.t;
-  // nodes
-  for(const m of state.spheres){
-    const n=state.nodes[m.userData.id];
-    const age=(t - n.birth)/(m.userData.ramp||400);
-    const a=Math.max(0, Math.min(1, easeOutCubic(age)));
-    if(a<=0){ m.visible=false; continue; }
-    m.visible=true;
-    m.scale.setScalar(0.001 + a);
-    m.material.opacity = a;
-  }
-  // edges
-  if(state.edgesGrow){
-    const arr=state.sortedEdgeBirths; let lo=0, hi=arr.length; while(lo<hi){const mid=(lo+hi)>>1; if(arr[mid]<=t) lo=mid+1; else hi=mid;}
-    state.edgesGrow.geometry.setDrawRange(0, lo*2);
-  }
-  // counters + timeline
-  updateCounters(t);
-  tlFill.style.width = `${Math.min(100,(t/BLOOM.duration)*100)}%`;
-}
-
-/* ---------- pointer + tooltip ---------- */
-const ray=new THREE.Raycaster(), mouse=new THREE.Vector2(); let down={x:0,y:0}, moved=false;
-renderer.domElement.addEventListener('pointerdown',ev=>{down.x=ev.clientX; down.y=ev.clientY; moved=false});
-renderer.domElement.addEventListener('pointermove',ev=>{
-  if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y)>6) moved=true;
-  const rect=renderer.domElement.getBoundingClientRect(); mouse.x=((ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-((ev.clientY-rect.top)/rect.height)*2+1;
-  ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
-  if(hits.length){
-    const n=state.nodes[hits[0].object.userData.id];
-    tipEl.style.left=(ev.clientX+12)+'px'; tipEl.style.top=(ev.clientY+12)+'px';
-    tipEl.innerHTML = `${n.type.toUpperCase()} #${n.id}<br>gift ${fmtMoney(n.gift)} · children ${n.children.length}`;
-    tipEl.style.display='block';
-  } else tipEl.style.display='none';
-});
-renderer.domElement.addEventListener('pointerup',ev=>{
-  if(moved) return;
-  const rect=renderer.domElement.getBoundingClientRect();
-  mouse.x=((ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-((ev.clientY-rect.top)/rect.height)*2+1;
-  ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
-  if(hits.length){highlight(hits[0].object.userData.id)} else {clearHi()}
-},{passive:true});
-
-/* ---------- buttons / keys ---------- */
-$('btnHelp').addEventListener('click', ()=> helpEl.classList.toggle('open'));
-$('btnBloom').addEventListener('click', ()=>{
-  BLOOM.playing=!BLOOM.playing;
-  if(BLOOM.playing){BLOOM.start=performance.now()-BLOOM.t; $('btnBloom').textContent='⏸ Bloom';}
-  else {$('btnBloom').textContent='⏵ Bloom';}
-});
-window.addEventListener('keydown',e=>{
-  if(e.key==='h'||e.key==='H') helpEl.classList.toggle('open');
-  if(e.key==='b'||e.key==='B'){
-    if(e.shiftKey){BLOOM.t=0; BLOOM.playing=false; $('btnBloom').textContent='⏵ Bloom'; updateCounters(BLOOM.t); tlFill.style.width='0%';}
-    else {BLOOM.playing=!BLOOM.playing; $('btnBloom').textContent=BLOOM.playing?'⏸ Bloom':'⏵ Bloom'; if(BLOOM.playing) BLOOM.start=performance.now()-BLOOM.t;}
-  }
-});
-
-/* ---------- loop & boot ---------- */
-function loop(){
-  if(BLOOM.playing){
-    BLOOM.t = Math.min(BLOOM.duration, performance.now()-BLOOM.start);
-    if(BLOOM.t>=BLOOM.duration){ BLOOM.playing=false; $('btnBloom').textContent='⏵ Bloom'; }
-  }
-  applyBloom();
-  controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop);
-}
-loop();
-buildGraph(P);
-setStatus('ready — building donor universe…');
-
-/* ---------- end module ---------- */
+}catch(err){ showError(err); }
+})();
 </script>
 </body>
 </html>
