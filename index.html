@@ -3,34 +3,26 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Smart Coin® — 3D Donor Dedication Map (Clean UI)</title>
+<title>Smart Coin® — 3D Donor Dedication Map (One-Light Rule)</title>
 <style>
-  :root{
-    --bg:#000; --panel:#111826; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d; --accent:#6ee7ff;
-  }
+  :root{ --bg:#000; --panel:#111826; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d; --accent:#6ee7ff; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
   #app{position:relative;width:100%;height:100vh;min-height:560px;background:#000}
-  /* Tiny UI chips */
+
   .chip{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;border:1px solid #2f3b66}
   #legend{position:fixed;left:10px;top:10px;z-index:8;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;color:#cfe1ff;opacity:.9}
   #status{position:fixed;left:10px;bottom:10px;z-index:8;background:var(--panel);color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;max-width:78vw;white-space:pre-wrap}
-  /* micro buttons */
   #buttons{position:fixed;right:10px;top:10px;z-index:9;display:flex;gap:8px}
   .btn{background:var(--panel);color:#eaf0ff;border:1px solid var(--border);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer}
-  #menu{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:none;min-width:220px;overflow:hidden}
+  #menu{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:none;min-width:240px;overflow:hidden}
   #menu.open{display:block}
   #menu .item{padding:8px 10px;border-bottom:1px solid #16223d;cursor:pointer;font-size:12px}
   #menu .item:last-child{border-bottom:none}
   #menu .item:hover{background:#0d142b}
-  /* help */
-  #help{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px;display:none;max-width:320px}
+  #help{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px;display:none;max-width:340px}
   #help.open{display:block}
-  /* tooltip */
   #tip{position:fixed;pointer-events:none;z-index:11;background:#0b1020;border:1px solid #223054;border-radius:6px;padding:6px 8px;font-size:12px;display:none;color:#dce6ff}
-  @media (max-width:768px){
-    #legend{font-size:11px}
-    .btn{padding:8px}
-  }
+  @media (max-width:768px){ #legend{font-size:11px} .btn{padding:8px} }
 </style>
 
 <script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
@@ -48,9 +40,9 @@
 
 <div id="legend">
   <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: roots</div>
-  <div><span class="chip" style="background:#93c5fd"></span>Light blue: referrals</div>
-  <div><span class="chip" style="background:#22c55e"></span>Green: extra seed</div>
-  <div><span class="chip" style="background:#ef4444"></span>Red: extra chain</div>
+  <div><span class="chip" style="background:#93c5fd"></span>Light blue: primary +1 (max 1 per parent)</div>
+  <div><span class="chip" style="background:#22c55e"></span>Green: extra donations from same parent</div>
+  <div><span class="chip" style="background:#ef4444"></span>Red: everything downstream of any green</div>
 </div>
 
 <div id="buttons">
@@ -60,16 +52,17 @@
 <div id="menu"></div>
 <div id="help">
   <b>Shortcuts</b><br>
-  H — toggle help ・ P — presets ・ I — isolate subtree on click<br>
+  H — help ・ P — presets ・ I — isolate subtree on click<br>
   A — toggle ancestor path ・ F — depth fade on/off<br>
   [ / ] — page visible roots ・ R — reset view<br>
-  Click node: highlight descendants + (optional) ancestors
+  Click any node to highlight descendants (+ optional ancestor path).
 </div>
 <div id="tip"></div>
 <div id="status">Status: loading…</div>
 
 <script type="module">
-const statusEl=document.getElementById('status'); const setStatus=m=>statusEl.textContent='Status: '+m; const showError=e=>{setStatus('Error: '+(e?.message||e));console.error(e);}
+/* ---------- boot THREE ---------- */
+const statusEl=document.getElementById('status'); const setStatus=m=>statusEl.textContent='Status: '+m; const showError=e=>{setStatus('Error: '+(e?.message||e));console.error(e)}
 const rootEl=document.getElementById('app'); const menuEl=document.getElementById('menu'); const helpEl=document.getElementById('help'); const tipEl=document.getElementById('tip');
 
 const THREE=await import('three'); const {OrbitControls}=await import('three/addons/controls/OrbitControls.js');
@@ -82,242 +75,18 @@ function size(){const w=rootEl.clientWidth||window.innerWidth; const h=rootEl.cl
 function resize(){const {w,h}=size(); camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h,false)} window.addEventListener('resize',resize);
 function resetView(){camera.position.set(0,0,760); controls.target.set(0,0,0); controls.update()} resetView(); resize();
 
-/* ---------- GENERATOR CORE (same engine as before, fewer knobs) ---------- */
+/* ---------- state + utils ---------- */
 const state={group:null,nodes:[],links:[],spheres:[],edges:null,glowDesc:null,glowAnc:null,rootWire:null,roots:[],levels:[],capped:false};
-function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19;return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
+function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++) h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19; return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
 function mulberry32(a){return function(){var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return((t^t>>>14)>>>0)/4294967296 }}
 function makeRNG(seedStr){if(!seedStr) return Math.random; const seed=xmur3(String(seedStr))(); return mulberry32(seed)}
 function poisson(lambda,rand){if(lambda<=0) return 0; const L=Math.exp(-lambda); let k=0,p=1; do{k++;p*=rand()}while(p>L); return k-1}
 function dispose(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose(); if(o.material){Array.isArray(o.material)?o.material.forEach(m=>m.dispose()):o.material.dispose()}})}
 function clearHi(){['glowDesc','glowAnc','rootWire'].forEach(k=>{const m=state[k]; if(m){state.group.remove(m); dispose(m); state[k]=null}}); state.spheres.forEach(m=>{m.material.transparent=false; m.material.opacity=1}); if(state.edges) state.edges.material.opacity=0.15}
 
-/* Presets (pick one, no sliders) */
+/* ---------- presets & flags ---------- */
 const PRESETS=[
-  {name:'Sparse (demo)',   desc:'Light overlap, quick',       p:{roots:40, plusDepth:6,  plusProb:.8, plusFan:1.2, plusDecay:.92, extraProb:.25, extraDepth:4, extraProbCont:.7, extraFan:1.3, extraDecay:.9, radius:360, jitter:30, seed:'sparse', cap:5000}},
-  {name:'Typical',         desc:'Balanced density',           p:{roots:100,plusDepth:10, plusProb:.85,plusFan:1.6, plusDecay:.9,  extraProb:.35, extraDepth:8, extraProbCont:.75,extraFan:2.0, extraDecay:.85,radius:420, jitter:34, seed:'typical',cap:9000}},
-  {name:'Aggressive',      desc:'Bigger trees',               p:{roots:160,plusDepth:14, plusProb:.88,plusFan:2.0, plusDecay:.9,  extraProb:.45, extraDepth:10,extraProbCont:.8, extraFan:2.2, extraDecay:.86,radius:520, jitter:38, seed:'agg',   cap:13000}},
-  {name:'Showcase (wide)', desc:'Few roots, long chains',     p:{roots:28, plusDepth:18, plusProb:.9, plusFan:1.4, plusDecay:.94, extraProb:.5,  extraDepth:14,extraProbCont:.82,extraFan:2.4, extraDecay:.9, radius:640, jitter:42, seed:'show',  cap:8000}}
-];
-let CUR=1; // start with Typical
-let FLAGS={depthFade:true, showAnc:true, isolate:false, rootPage:0, rootsPerPage:80};
-
-function buildGraph(P){
-  const rand=makeRNG(P.seed); state.capped=false;
-  if(state.group){scene.remove(state.group); dispose(state.group)}
-  state.group=new THREE.Group(); scene.add(state.group);
-  state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[]; clearHi();
-
-  const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444;
-  const COLOR_EDGE=0x5b6b95;
-  let id=0;
-  function addNode(type,parent=null,depth=0){
-    if(state.nodes.length>=P.cap){state.capped=true; return null}
-    const n={id:id++,type,parent,children:[],depth};
-    state.nodes.push(n);
-    if(parent!=null){state.links.push({source:parent,target:n.id}); state.nodes[parent].children.push(n.id)}
-    return n;
-  }
-
-  // root paging (show subset of roots to reduce clutter)
-  const startRoot = FLAGS.rootPage*FLAGS.rootsPerPage;
-  const rootsToMake = Math.min(P.roots - startRoot, FLAGS.rootsPerPage);
-  for(let i=0;i<rootsToMake;i++){const r=addNode('dark',null,0); if(r) state.roots.push(r.id); if(state.capped) break}
-
-  function growBranchingFrom(parentIds, nodeType, maxDepth, contProb, avgFanout, decay){
-    const q=[];
-    for(const pid of parentIds){
-      if(state.capped) break;
-      const k0=Math.max(1, poisson(Math.max(0,avgFanout), rand));
-      for(let i=0;i<k0 && !state.capped;i++){const c=addNode(nodeType,pid,1); if(c) q.push({id:c.id,depth:1})}
-    }
-    while(q.length && !state.capped){
-      const {id:pid, depth}=q.shift();
-      if(depth>=maxDepth) continue;
-      const scale=Math.pow(decay, Math.max(0,depth-1));
-      if(rand() >= contProb*scale) continue;
-      let k=poisson(Math.max(0, avgFanout*scale), rand);
-      while(k-- > 0 && !state.capped){
-        const c=addNode(nodeType,pid,depth+1); if(c) q.push({id:c.id, depth:depth+1});
-      }
-    }
-  }
-
-  // light branching from each root
-  growBranchingFrom(state.roots.slice(),'light',P.plusDepth,P.plusProb,P.plusFan,P.plusDecay);
-  // green seed + red branching
-  for(const r of state.roots){
-    if(state.capped) break;
-    if(rand()<P.extraProb){
-      const g=addNode('green', r, 1);
-      if(g) growBranchingFrom([g.id],'red',P.extraDepth,P.extraProbCont,P.extraFan,P.extraDecay);
-    }
-  }
-
-  // layout
-  function fibSphere(n,r=P.radius){const pts=[],phi=Math.PI*(3-Math.sqrt(5));
-    for(let i=0;i<n;i++){const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i; pts.push(new THREE.Vector3(Math.cos(th)*rad*r, y*r, Math.sin(th)*rad*r))}
-    return pts}
-  const dark=state.nodes.filter(n=>n.type==='dark'); const pts=fibSphere(dark.length,P.radius);
-  dark.forEach((n,i)=>{n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z});
-  state.nodes.forEach(n=>{
-    if(n.type!=='dark'){
-      const p=state.nodes[n.parent]||{x:0,y:0,z:0};
-      const depthScale = 1 + 0.03*Math.max(0,(n.depth||1)-1);
-      const j=()=> (Math.random()*2-1)*P.jitter*depthScale;
-      n.x=p.x+j(); n.y=p.y+j(); n.z=p.z+j();
-    }
-  });
-
-  // nodes
-  const col=t=>t==='dark'?COLOR_DARK:t==='light'?COLOR_LIGHT:t==='green'?COLOR_GREEN:COLOR_RED;
-  state.nodes.forEach(n=>{
-    const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
-    const mat = new THREE.MeshStandardMaterial({color:col(n.type), metalness:.15, roughness:.45});
-    if(FLAGS.depthFade && n.type!=='dark'){ // fade by depth
-      const fade = Math.max(.08, 1/Math.pow(1.18, n.depth||1));
-      mat.transparent=true; mat.opacity=fade;
-    }
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(size,18,18), mat);
-    mesh.position.set(n.x,n.y,n.z); mesh.userData.id=n.id;
-    state.group.add(mesh); state.spheres.push(mesh);
-  });
-
-  // edges (very faint globally)
-  const pos=new Float32Array(state.links.length*6); let k=0;
-  state.links.forEach(l=>{const s=state.nodes[l.source], t=state.nodes[l.target];
-    pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;});
-  const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE, transparent:true, opacity:0.15}));
-  state.group.add(state.edges);
-
-  computeMetrics();
-  setStatus(`ready — ${state.roots.length} roots, ${state.nodes.length} nodes${state.capped?' (capped)':''}. H=help`);
-}
-
-function computeMetrics(){
-  state.levels = new Array(state.nodes.length).fill(-1);
-  state.roots.forEach(r=>{const q=[r]; state.levels[r]=0; while(q.length){const cur=q.shift(); const lvl=state.levels[cur];
-    state.nodes[cur].children.forEach(ch=>{if(state.levels[ch]===-1){state.levels[ch]=lvl+1; q.push(ch)}})}});
-}
-
-function rootOf(id){let cur=id, steps=0; while(state.nodes[cur].parent!=null){cur=state.nodes[cur].parent; steps++} return {root:cur, steps}}
-
-function clearHighlight(){clearHi(); setStatus('ready — click a node to explore. H=help')}
-function highlight(startId){
-  clearHi();
-  // isolate mode: rebuild visibility mask
-  const keepDesc=new Set([startId]); const q=[startId];
-  while(q.length){const cur=q.shift(); state.nodes[cur].children.forEach(ch=>{if(!keepDesc.has(ch)){keepDesc.add(ch); q.push(ch)}})}
-  let keepAnc=new Set();
-  if(FLAGS.showAnc){let cur=startId; while(state.nodes[cur].parent!=null){const p=state.nodes[cur].parent; keepAnc.add(p); cur=p}}
-  const keepAll=new Set([...keepDesc,...keepAnc]);
-  // isolate: hide non-kept completely
-  state.spheres.forEach(m=>{
-    const on=FLAGS.isolate? keepAll.has(m.userData.id) : true;
-    m.visible = on;
-    if(!FLAGS.isolate){
-      const kept = keepAll.has(m.userData.id);
-      m.material.transparent=true; m.material.opacity = kept?1:0.10;
-    }
-  });
-  if(state.edges){
-    if(FLAGS.isolate){ // draw only kept links bright
-      const kept=state.links.filter(l=> keepAll.has(l.source)&&keepAll.has(l.target));
-      const dpos=new Float32Array(kept.length*6); let i=0;
-      kept.forEach(l=>{const s=state.nodes[l.source],t=state.nodes[l.target];
-        dpos[i++]=s.x; dpos[i++]=s.y; dpos[i++]=s.z; dpos[i++]=t.x; dpos[i++]=t.y; dpos[i++]=t.z;});
-      const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(dpos,3));
-      state.glowDesc=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({color:0x06b6d4,transparent:true,opacity:.95}));
-      state.group.add(state.glowDesc);
-      state.edges.visible=false;
-    }else{
-      state.edges.material.opacity=0.06; // dim global
-      // add bright kept overlay
-      const kept=state.links.filter(l=> keepAll.has(l.source)&&keepAll.has(l.target));
-      const dpos=new Float32Array(kept.length*6); let i=0;
-      kept.forEach(l=>{const s=state.nodes[l.source],t=state.nodes[l.target];
-        dpos[i++]=s.x; dpos[i++]=s.y; dpos[i++]=s.z; dpos[i++]=t.x; dpos[i++]=t.y; dpos[i++]=t.z;});
-      const geo=new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(dpos,3));
-      state.glowDesc=new THREE.LineSegments(geo,new THREE.LineBasicMaterial({color:0x06b6d4,transparent:true,opacity:.95}));
-      state.group.add(state.glowDesc);
-      state.edges.visible=true;
-    }
-  }
-  if(FLAGS.showAnc){
-    // draw ancestor path in gold + ring root
-    let child=startId, segs=[]; while(state.nodes[child].parent!=null){const p=state.nodes[child].parent; segs.push([p,child]); child=p}
-    if(segs.length){
-      const apos=new Float32Array(segs.length*6); let j=0;
-      segs.forEach(([a,b])=>{const s=state.nodes[a],t=state.nodes[b];
-        apos[j++]=s.x; apos[j++]=s.y; apos[j++]=s.z; apos[j++]=t.x; apos[j++]=t.y; apos[j++]=t.z;});
-      const ageo=new THREE.BufferGeometry(); ageo.setAttribute('position', new THREE.BufferAttribute(apos,3));
-      state.glowAnc=new THREE.LineSegments(ageo, new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:.95}));
-      state.group.add(state.glowAnc);
-      const r = rootOf(startId).root; const wire=new THREE.WireframeGeometry(new THREE.SphereGeometry(6.6,10,8));
-      state.rootWire=new THREE.LineSegments(wire,new THREE.LineBasicMaterial({color:0xf59e0b, transparent:true, opacity:.85}));
-      state.rootWire.position.set(state.nodes[r].x,state.nodes[r].y,state.nodes[r].z);
-      state.group.add(state.rootWire);
-    }
-  }
-}
-
-/* --------- Interaction (click / hover / keys) --------- */
-const ray=new THREE.Raycaster(), mouse=new THREE.Vector2(); let down={x:0,y:0}, moved=false;
-renderer.domElement.addEventListener('pointerdown',ev=>{down.x=ev.clientX; down.y=ev.clientY; moved=false});
-renderer.domElement.addEventListener('pointermove',ev=>{
-  if(Math.hypot(ev.clientX-down.x, ev.clientY-down.y)>6) moved=true;
-  // tooltip hover
-  const rect=renderer.domElement.getBoundingClientRect(); mouse.x=( (ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-( (ev.clientY-rect.top)/rect.height)*2+1;
-  ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
-  if(hits.length){
-    const n=state.nodes[hits[0].object.userData.id];
-    tipEl.style.left=(ev.clientX+12)+'px'; tipEl.style.top=(ev.clientY+12)+'px';
-    tipEl.innerHTML = `${n.type.toUpperCase()} #${n.id}<br>depth ${n.depth||0}, children ${n.children.length}`;
-    tipEl.style.display='block';
-  } else tipEl.style.display='none';
-});
-renderer.domElement.addEventListener('pointerup',ev=>{
-  if(moved) return;
-  const rect=renderer.domElement.getBoundingClientRect();
-  mouse.x=( (ev.clientX-rect.left)/rect.width)*2-1; mouse.y=-( (ev.clientY-rect.top)/rect.height)*2+1;
-  ray.setFromCamera(mouse,camera); const hits=ray.intersectObjects(state.spheres,true);
-  if(hits.length){highlight(hits[0].object.userData.id)} else {clearHighlight()}
-},{passive:true});
-
-function applyPreset(idx){CUR=idx; const P=PRESETS[CUR].p; buildGraph({roots:P.roots, plusDepth:P.plusDepth, plusProb:P.plusProb, plusFan:P.plusFan, plusDecay:P.plusDecay, extraProb:P.extraProb, extraDepth:P.extraDepth, extraProbCont:P.extraProbCont, extraFan:P.extraFan, extraDecay:P.extraDecay, radius:P.radius, jitter:P.jitter, seed:P.seed, cap:P.cap})}
-
-function toggleMenu(){
-  if(menuEl.classList.contains('open')){menuEl.classList.remove('open'); return}
-  menuEl.innerHTML='';
-  PRESETS.forEach((pr,i)=>{
-    const d=document.createElement('div'); d.className='item';
-    d.textContent = (i===CUR?'✓ ':'')+pr.name+' — '+pr.desc;
-    d.onclick=()=>{menuEl.classList.remove('open'); applyPreset(i)};
-    menuEl.appendChild(d);
-  });
-  const tools=document.createElement('div'); tools.className='item'; tools.textContent='Toggle isolate (I) / depth fade (F) / ancestors (A)';
-  menuEl.appendChild(tools);
-  menuEl.classList.add('open');
-}
-
-document.getElementById('btnPresets').addEventListener('click', toggleMenu);
-document.getElementById('btnHelp').addEventListener('click', ()=> helpEl.classList.toggle('open'));
-window.addEventListener('keydown',e=>{
-  if(e.key==='h' || e.key==='H'){helpEl.classList.toggle('open')}
-  if(e.key==='p' || e.key==='P'){toggleMenu()}
-  if(e.key==='r' || e.key==='R'){resetView()}
-  if(e.key==='a' || e.key==='A'){FLAGS.showAnc=!FLAGS.showAnc; clearHighlight(); setStatus(`ancestors: ${FLAGS.showAnc?'on':'off'}`)}
-  if(e.key==='f' || e.key==='F'){FLAGS.depthFade=!FLAGS.depthFade; applyPreset(CUR); setStatus(`depth fade: ${FLAGS.depthFade?'on':'off'}`)}
-  if(e.key==='i' || e.key==='I'){FLAGS.isolate=!FLAGS.isolate; setStatus(`isolate: ${FLAGS.isolate?'on':'off'} (click a node)`)}
-  if(e.key===']'){FLAGS.rootPage++; applyPreset(CUR); setStatus(`root page ${FLAGS.rootPage}`)}
-  if(e.key==='['){FLAGS.rootPage=Math.max(0,FLAGS.rootPage-1); applyPreset(CUR); setStatus(`root page ${FLAGS.rootPage}`)}
-});
-
-/* render loop */
-function loop(){controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop)} loop();
-
-/* boot */
-applyPreset(CUR);
-</script>
-</body>
-</html>
+  {name:'Sparse (demo)',   desc:'Few overlaps', p:{roots:40,  lightDepth:6,  lightProb:.8,  lightFan:1.2, lightDecay:.92, extraDepth:6, extraProb:.8, extraFan:1.4, extraDecay:.9,  radius:360, jitter:30, seed:'sparse', cap:5000}},
+  {name:'Typical',         desc:'Balanced',     p:{roots:100, lightDepth:10, lightProb:.85, lightFan:1.6, lightDecay:.9,  extraDepth:10,extraProb:.85,extraFan:1.8, extraDecay:.88, radius:420, jitter:34, seed:'typical',cap:9000}},
+  {name:'Aggressive',      desc:'Big trees',    p:{roots:160, lightDepth:14, lightProb:.88, lightFan:2.0, lightDecay:.9,  extraDepth:12,extraProb:.9, extraFan:2.2, extraDecay:.86, radius:520, jitter:38, seed:'agg',   cap:13000}},
+  {name:'Showcase (wide)', desc:'Long cha
