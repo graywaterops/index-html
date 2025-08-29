@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Smart Coin™ — 3D Donor Dedication Map (One‑Light Rule)</title>
+<title>Smart Coin™ — Donor Map (Bloom Mode)</title>
 <style>
   :root{ --bg:#000; --panel:#111826; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d; --accent:#6ee7ff; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
@@ -14,19 +14,29 @@
   #status{position:fixed;left:10px;bottom:10px;z-index:8;background:var(--panel);color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;max-width:78vw;white-space:pre-wrap}
   #buttons{position:fixed;right:10px;top:10px;z-index:9;display:flex;gap:8px}
   .btn{background:var(--panel);color:#eaf0ff;border:1px solid var(--border);border-radius:999px;padding:8px 10px;font-size:12px;cursor:pointer}
+
   #menu{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;display:none;min-width:240px;overflow:hidden}
   #menu.open{display:block}
   #menu .item{padding:8px 10px;border-bottom:1px solid #16223d;cursor:pointer;font-size:12px}
   #menu .item:last-child{border-bottom:none}
   #menu .item:hover{background:#0d142b}
-  #help{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px;display:none;max-width:340px}
+
+  #help{position:fixed;right:10px;top:44px;z-index:10;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:12px;display:none;max-width:360px}
   #help.open{display:block}
+
   #tip{position:fixed;pointer-events:none;z-index:11;background:#0b1020;border:1px solid #223054;border-radius:6px;padding:6px 8px;font-size:12px;display:none;color:#dce6ff}
+
+  /* Bloom timeline */
+  #timeline{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:9;
+    width:min(520px,70vw);height:8px;background:var(--panel);border:1px solid var(--border);
+    border-radius:999px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.25)}
+  #tlFill{height:100%;width:0%;background:var(--accent);opacity:.9}
+
   @media (max-width:768px){ #legend{font-size:11px} .btn{padding:8px} }
 </style>
 
 <!-- Polyfill and import map so "three" works everywhere -->
-<script async src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -42,33 +52,39 @@
 <div id="legend">
   <div><span class="chip" style="background:#1e3a8a"></span>Dark blue: roots</div>
   <div><span class="chip" style="background:#93c5fd"></span>Light blue: primary +1 (max 1 per parent)</div>
-  <div><span class="chip" style="background:#22c55e"></span>Green: extra donations from same parent</div>
-  <div><span class="chip" style="background:#ef4444"></span>Red: everything downstream of any green</div>
+  <div><span class="chip" style="background:#22c55e"></span>Green: extras (other donations)</div>
+  <div><span class="chip" style="background:#ef4444"></span>Red: everything below any green</div>
 </div>
 
 <div id="buttons">
   <button id="btnPresets" class="btn">Presets ▾</button>
-  <button id="btnHelp" class="btn">?</button>
+  <button id="btnBloom"   class="btn">▶ Bloom</button>
+  <button id="btnHelp"    class="btn">?</button>
 </div>
 <div id="menu"></div>
 <div id="help">
   <b>Shortcuts</b><br>
   H — help ・ P — presets ・ I — isolate subtree on click<br>
   A — toggle ancestor path ・ F — depth fade on/off<br>
-  [ / ] — page visible roots ・ R — reset view<br>
-  Click any node to highlight descendants (+ optional ancestor path).
+  B — play/pause <i>Bloom</i> ・ Shift+B — reset<br>
+  K — toggle Art glow (emissive pulses)<br>
+  [ / ] — page roots ・ R — reset view<br>
+  Click a node to highlight descendants (+ optional ancestor path).
 </div>
 <div id="tip"></div>
+<div id="timeline" aria-hidden="true"><div id="tlFill"></div></div>
 <div id="status">Status: loading…</div>
 
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 
-/* ---------- status helpers ---------- */
+/* ---------- helpers ---------- */
 const statusEl=document.getElementById('status');
 const setStatus=m=>statusEl.textContent='Status: '+m;
 const showError=e=>{ setStatus('Error: '+(e?.message||e)); console.error(e); };
+const tlFill=document.getElementById('tlFill');
+const easeOutCubic=t=>1-Math.pow(1-Math.min(1,Math.max(0,t)),3);
 
 /* ---------- scene ---------- */
 const rootEl=document.getElementById('app');
@@ -99,14 +115,17 @@ function resetView(){camera.position.set(0,0,760); controls.target.set(0,0,0); c
 resetView(); resize();
 
 /* ---------- state + utils ---------- */
-const state={group:null,nodes:[],links:[],spheres:[],edges:null,glowDesc:null,glowAnc:null,rootWire:null,roots:[],capped:false};
+const state={
+  group:null,nodes:[],links:[],spheres:[],edges:null,edgesGrow:null,glowDesc:null,glowAnc:null,rootWire:null,roots:[],capped:false,
+  sortedEdgeBirths:[], maxBirth:0
+};
 
 function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++) h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19; return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
 function mulberry32(a){return function(){var t=a+=0x6D2B79F5; t=Math.imul(t^t>>>15,t|1); t^=t+Math.imul(t^t>>>7,t|61); return((t^t>>>14)>>>0)/4294967296 }}
 function makeRNG(seedStr){if(!seedStr) return Math.random; const seed=xmur3(String(seedStr))(); return mulberry32(seed)}
 function poisson(lambda,rand){if(lambda<=0) return 0; const L=Math.exp(-lambda); let k=0,p=1; do{k++;p*=rand()}while(p>L); return k-1}
 function dispose(obj){obj.traverse(o=>{if(o.geometry)o.geometry.dispose(); if(o.material){Array.isArray(o.material)?o.material.forEach(m=>m.dispose()):o.material.dispose()}})}
-function clearHi(){['glowDesc','glowAnc','rootWire'].forEach(k=>{const m=state[k]; if(m){state.group.remove(m); dispose(m); state[k]=null}}); state.spheres.forEach(m=>{m.material.transparent=false; m.material.opacity=1}); if(state.edges) state.edges.material.opacity=0.15;}
+function clearHi(){['glowDesc','glowAnc','rootWire'].forEach(k=>{const m=state[k]; if(m){state.group.remove(m); dispose(m); state[k]=null}}); state.spheres.forEach(m=>{m.material.transparent=false; m.material.opacity=1}); if(state.edges) state.edges.material.opacity=0.12;}
 function rootOf(id){let cur=id; while(state.nodes[cur].parent!=null){cur=state.nodes[cur].parent;} return cur;}
 
 /* ---------- presets & flags ---------- */
@@ -117,48 +136,56 @@ const PRESETS=[
   {name:'Showcase (wide)', desc:'Long chains',  p:{roots:28,  lightDepth:18, lightProb:.9,  lightFan:1.4, lightDecay:.94, extraDepth:16, extraProb:.9,  extraFan:2.4, extraDecay:.9,  radius:640, jitter:42, seed:'show',  cap:8000}}
 ];
 let CUR=1;
-let FLAGS={depthFade:true, showAnc:true, isolate:false, rootPage:0, rootsPerPage:80};
+let FLAGS={depthFade:true, showAnc:true, isolate:false, artGlow:false, rootPage:0, rootsPerPage:80};
+let BLOOM={playing:false, t:0, duration:10000, speed:1, start:0};
 
-/* ---------- build with one‑light‑per‑parent rule ---------- */
+/* ---------- build with one‑light‑per‑parent rule + births ---------- */
 function buildGraph(P){
   const rand=makeRNG(P.seed); state.capped=false;
   if(state.group){scene.remove(state.group); dispose(state.group);}
   state.group=new THREE.Group(); scene.add(state.group);
-  state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.roots=[]; clearHi();
+  state.nodes=[]; state.links=[]; state.spheres=[]; state.edges=null; state.edgesGrow=null; state.roots=[]; clearHi();
 
   const COLOR_DARK=0x1e3a8a, COLOR_LIGHT=0x93c5fd, COLOR_GREEN=0x22c55e, COLOR_RED=0xef4444, COLOR_EDGE=0x5b6b95;
+
+  // birth timing constants (ms)
+  const ROOT_STAGGER=160, STEP_LIGHT=600, STEP_GREEN=480, STEP_RED=300, RAMP_MS=420;
+
   let id=0;
-  function addNode(type,parent=null,branch='light',bdepth=0){
+  function addNode(type,parent=null,branch='light',bdepth=0,birth=0){
     if(state.nodes.length>=P.cap){state.capped=true; return null;}
-    const n={id:id++,type,parent,children:[],branch,bdepth};
+    const n={id:id++,type,parent,children:[],branch,bdepth,birth};
     state.nodes.push(n);
     if(parent!=null){state.links.push({source:parent,target:n.id}); state.nodes[parent].children.push(n.id);}
     return n;
   }
 
-  // root paging (subset per page)
+  // roots with staggered births
   const startRoot=FLAGS.rootPage*FLAGS.rootsPerPage;
   const toMake=Math.max(0, Math.min(P.roots-startRoot, FLAGS.rootsPerPage));
-  for(let i=0;i<toMake;i++){const r=addNode('dark',null,'light',0); if(r) state.roots.push(r.id); if(state.capped) break;}
+  for(let i=0;i<toMake;i++){
+    const b = i*ROOT_STAGGER + (rand()*80); // gentle jitter
+    const r=addNode('dark',null,'light',0,b);
+    if(r) state.roots.push(r.id);
+    if(state.capped) break;
+  }
 
   // BFS growth
   const q=state.roots.map(id=>({id}));
   while(q.length && !state.capped){
-    const pid=q.shift().id;
-    const p=state.nodes[pid];
+    const pid=q.shift().id; const p=state.nodes[pid];
 
     if(p.branch==='light' && p.bdepth < P.lightDepth){
       const scale=Math.pow(P.lightDecay, Math.max(0,p.bdepth));
       if(rand() < P.lightProb*scale){
-        // total children demanded now
         let k = poisson(Math.max(0, P.lightFan*scale), rand);
         if(k>0){
-          // exactly one primary (+1) light child
-          const lightChild=addNode('light', pid, 'light', p.bdepth+1);
+          const lbirth = p.birth + STEP_LIGHT*(0.8+0.4*rand());
+          const lightChild=addNode('light', pid, 'light', p.bdepth+1, lbirth);
           if(lightChild) q.push({id:lightChild.id});
-          // any additional become GREEN (extras) and switch branch='extra'
           for(let i=1;i<k && !state.capped;i++){
-            const g=addNode('green', pid, 'extra', 1);
+            const gbirth = p.birth + STEP_GREEN*(0.6+0.5*rand());
+            const g=addNode('green', pid, 'extra', 1, gbirth);
             if(g) q.push({id:g.id});
           }
         }
@@ -167,9 +194,9 @@ function buildGraph(P){
       const scale=Math.pow(P.extraDecay, Math.max(0,p.bdepth-1));
       if(rand() < P.extraProb*scale){
         let k = poisson(Math.max(0, P.extraFan*scale), rand);
-        // ALL descendants below any green are RED
         for(let i=0;i<k && !state.capped;i++){
-          const r=addNode('red', pid, 'extra', p.bdepth+1);
+          const rbirth = p.birth + STEP_RED*(0.6+0.5*rand());
+          const r=addNode('red', pid, 'extra', p.bdepth+1, rbirth);
           if(r) q.push({id:r.id});
         }
       }
@@ -184,11 +211,12 @@ function buildGraph(P){
   }
   const dark=state.nodes.filter(n=>n.type==='dark'); const pts=fibSphere(dark.length,P.radius);
   dark.forEach((n,i)=>{n.x=pts[i].x; n.y=pts[i].y; n.z=pts[i].z;});
+  const rand2 = makeRNG(P.seed+'jitter');
   state.nodes.forEach(n=>{
     if(n.type!=='dark'){
       const p=state.nodes[n.parent]||{x:0,y:0,z:0};
       const spread=P.jitter*(1+0.04*Math.max(0,n.bdepth-1));
-      const j=()=> (rand()*2-1)*spread;
+      const j=()=> (rand2()*2-1)*spread;
       n.x=p.x+j(); n.y=p.y+j(); n.z=p.z+j();
     }
   });
@@ -197,30 +225,48 @@ function buildGraph(P){
   const col=t=>t==='dark'?COLOR_DARK:t==='light'?COLOR_LIGHT:t==='green'?COLOR_GREEN:COLOR_RED;
   state.nodes.forEach(n=>{
     const size = n.type==='dark'?5.2 : n.type==='light'?4 : n.type==='green'?4.4 : 3.8;
-    const mat=new THREE.MeshStandardMaterial({color:col(n.type), metalness:.15, roughness:.45});
-    if(FLAGS.depthFade && n.type!=='dark'){
-      const base = (n.branch==='light') ? n.bdepth : (1 + n.bdepth);
-      const fade = Math.max(.10, 1/Math.pow(1.2, base));
-      mat.transparent=true; mat.opacity=fade;
-    }
-    const mesh=new THREE.Mesh(new THREE.SphereGeometry(size,18,18), mat);
+    const matBase=new THREE.MeshStandardMaterial({color:col(n.type), metalness:.15, roughness:.45, transparent:true, opacity:0}); // start invisible
+    const matGlow=new THREE.MeshStandardMaterial({color:col(n.type), metalness:.0, roughness:.2, emissive:new THREE.Color(col(n.type)), emissiveIntensity:0.0, transparent:true, opacity:0.0});
+    const mesh=new THREE.Mesh(new THREE.SphereGeometry(size,18,18), matBase);
     mesh.position.set(n.x,n.y,n.z); mesh.userData.id=n.id;
+    mesh.userData.baseSize=size; mesh.userData.birth=n.birth; mesh.userData.ramp=RAMP_MS;
+    mesh.userData.matBase=matBase; mesh.userData.matGlow=matGlow;
+    mesh.scale.setScalar(0.001);
     state.group.add(mesh); state.spheres.push(mesh);
   });
 
-  // edges
+  // base faint edges (always on)
   const pos=new Float32Array(state.links.length*6); let k=0;
   state.links.forEach(l=>{const s=state.nodes[l.source], t=state.nodes[l.target];
     pos[k++]=s.x; pos[k++]=s.y; pos[k++]=s.z; pos[k++]=t.x; pos[k++]=t.y; pos[k++]=t.z;});
   const edgeGeo=new THREE.BufferGeometry(); edgeGeo.setAttribute('position', new THREE.BufferAttribute(pos,3));
-  state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:0x5b6b95, transparent:true, opacity:0.15}));
+  state.edges=new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({color:COLOR_EDGE, transparent:true, opacity:0.12}));
   state.group.add(state.edges);
 
-  setStatus(`ready — ${state.roots.length} roots, ${state.nodes.length} nodes${state.capped?' (capped)':''}. H=help`);
+  // GROWING edges: sort by child's birth, pack into one geometry, then change drawRange during bloom
+  const sorted=state.links.slice().sort((a,b)=> state.nodes[a.target].birth - state.nodes[b.target].birth);
+  const posGrow=new Float32Array(sorted.length*6); let g=0;
+  const births=new Float32Array(sorted.length);
+  sorted.forEach((l,idx)=>{const s=state.nodes[l.source], t=state.nodes[l.target];
+    posGrow[g++]=s.x; posGrow[g++]=s.y; posGrow[g++]=s.z; posGrow[g++]=t.x; posGrow[g++]=t.y; posGrow[g++]=t.z;
+    births[idx]=state.nodes[l.target].birth;
+  });
+  const growGeo=new THREE.BufferGeometry(); growGeo.setAttribute('position', new THREE.BufferAttribute(posGrow,3));
+  growGeo.setDrawRange(0, 0); // none visible initially
+  const growMat=new THREE.LineBasicMaterial({color:0x6ee7ff, transparent:true, opacity:0.9});
+  state.edgesGrow=new THREE.LineSegments(growGeo, growMat);
+  state.group.add(state.edgesGrow);
+  state.sortedEdgeBirths = births;
+
+  state.maxBirth = state.nodes.reduce((m,n)=>Math.max(m,n.birth), 0);
+  BLOOM.duration = state.maxBirth + 2000; // a little tail
+  BLOOM.t = 0; BLOOM.playing = false; tlFill.style.width='0%';
+
+  setStatus(`ready — ${state.roots.length} roots, ${state.nodes.length} nodes${state.capped?' (capped)':''}. Press B to play/pause Bloom, K for Art glow, H=help`);
 }
 
 /* ---------- highlight + UI ---------- */
-function clearHighlight(){clearHi(); setStatus('ready — click a node to explore. H=help')}
+function clearHighlight(){clearHi(); setStatus('ready — click a node to explore. B=play/pause, H=help')}
 function highlight(startId){
   clearHi();
   const keepDesc=new Set([startId]); const q=[startId];
@@ -264,6 +310,55 @@ function highlight(startId){
   }
 }
 
+/* ---------- Bloom engine ---------- */
+function applyBloom(){
+  const t = BLOOM.t;
+  // nodes scale/opacity and optional glow
+  for(const m of state.spheres){
+    const n = state.nodes[m.userData.id];
+    const age = (t - n.birth) / (m.userData.ramp||400);
+    const a = Math.max(0, Math.min(1, easeOutCubic(age)));
+    if(a<=0){ m.visible=false; continue; }
+    m.visible=true;
+    m.scale.setScalar(0.001 + a);            // flourish
+    const baseAlpha = 1;                      // highlight handles dimming later
+    m.material.opacity = baseAlpha * a;
+
+    if(FLAGS.artGlow){
+      // gentle emissive pulse around birth, then fade
+      const pulse = Math.max(0, 1 - Math.abs(age-1)*0.9); // centered ~ when fully born
+      const glowMat = m.userData.matGlow;
+      glowMat.opacity = 0.6 * pulse;
+      glowMat.emissiveIntensity = 0.8 * pulse;
+      // swap to glow material while pulsing, otherwise base
+      m.material = (pulse>0.01)? glowMat : m.userData.matBase;
+      m.material.opacity = (pulse>0.01)? glowMat.opacity : baseAlpha * a;
+    } else {
+      m.material = m.userData.matBase;
+    }
+  }
+
+  // edges drawing progress
+  if(state.edgesGrow){
+    // How many segments are "born" at time t? binary search in sortedEdgeBirths
+    const arr = state.sortedEdgeBirths;
+    let lo=0, hi=arr.length;
+    while(lo<hi){const mid=(lo+hi)>>1; if(arr[mid] <= t) lo=mid+1; else hi=mid;}
+    const segs = lo;
+    state.edgesGrow.geometry.setDrawRange(0, segs*2); // 2 vertices per segment
+  }
+
+  // progress bar
+  tlFill.style.width = `${Math.min(100, (t / BLOOM.duration)*100)}%`;
+}
+
+function playPauseBloom(){
+  BLOOM.playing = !BLOOM.playing;
+  if(BLOOM.playing){ BLOOM.start = performance.now() - BLOOM.t; document.getElementById('btnBloom').textContent='⏸ Bloom'; setStatus('Bloom: playing'); }
+  else { document.getElementById('btnBloom').textContent='▶ Bloom'; setStatus('Bloom: paused'); }
+}
+function resetBloom(){ BLOOM.t=0; BLOOM.playing=false; document.getElementById('btnBloom').textContent='▶ Bloom'; setStatus('Bloom: reset'); }
+
 /* pointer + tooltip */
 const ray=new THREE.Raycaster(), mouse=new THREE.Vector2(); let down={x:0,y:0}, moved=false;
 renderer.domElement.addEventListener('pointerdown',ev=>{down.x=ev.clientX; down.y=ev.clientY; moved=false});
@@ -297,12 +392,14 @@ function toggleMenu(){
     d.onclick=()=>{menuEl.classList.remove('open'); applyPreset(i)};
     menuEl.appendChild(d);
   });
-  const t=document.createElement('div'); t.className='item'; t.style.opacity=.6; t.textContent='Toggles: Isolate (I) / Depth fade (F) / Ancestors (A)';
+  const t=document.createElement('div'); t.className='item'; t.style.opacity=.6;
+  t.textContent='Toggles: Isolate (I) / Depth fade (F) / Ancestors (A) / Art glow (K)';
   menuEl.appendChild(t);
   menuEl.classList.add('open');
 }
 document.getElementById('btnPresets').addEventListener('click', toggleMenu);
 document.getElementById('btnHelp').addEventListener('click', ()=> helpEl.classList.toggle('open'));
+document.getElementById('btnBloom').addEventListener('click', playPauseBloom);
 window.addEventListener('keydown',e=>{
   if(e.key==='h'||e.key==='H') helpEl.classList.toggle('open');
   if(e.key==='p'||e.key==='P') toggleMenu();
@@ -310,14 +407,23 @@ window.addEventListener('keydown',e=>{
   if(e.key==='a'||e.key==='A'){FLAGS.showAnc=!FLAGS.showAnc; clearHi(); setStatus(`ancestors: ${FLAGS.showAnc?'on':'off'}`)}
   if(e.key==='f'||e.key==='F'){FLAGS.depthFade=!FLAGS.depthFade; applyPreset(CUR); setStatus(`depth fade: ${FLAGS.depthFade?'on':'off'}`)}
   if(e.key==='i'||e.key==='I'){FLAGS.isolate=!FLAGS.isolate; setStatus(`isolate: ${FLAGS.isolate?'on':'off'} (click a node)`)}
+  if(e.key==='k'||e.key==='K'){FLAGS.artGlow=!FLAGS.artGlow; setStatus(`Art glow: ${FLAGS.artGlow?'on':'off'}`)}
   if(e.key===']'){FLAGS.rootPage++; applyPreset(CUR); setStatus(`root page ${FLAGS.rootPage}`)}
   if(e.key==='['){FLAGS.rootPage=Math.max(0,FLAGS.rootPage-1); applyPreset(CUR); setStatus(`root page ${FLAGS.rootPage}`)}
+  if(e.key==='b'||e.key==='B'){ if(e.shiftKey) resetBloom(); else playPauseBloom(); }
 });
 
 /* render loop + boot */
-function loop(){controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop)} loop();
+function loop(){
+  if(BLOOM.playing){
+    BLOOM.t = Math.min(BLOOM.duration, performance.now() - BLOOM.start);
+    if(BLOOM.t >= BLOOM.duration){ BLOOM.playing=false; document.getElementById('btnBloom').textContent='▶ Bloom'; }
+  }
+  applyBloom();
+  controls.update(); renderer.render(scene,camera); requestAnimationFrame(loop);
+}
+loop();
 applyPreset(CUR);
-setStatus('loading…'); // will be replaced by buildGraph() ready message
 </script>
 </body>
 </html>
