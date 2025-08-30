@@ -1,3 +1,5 @@
+if (window.__DU_SCRIPT_ACTIVE__) { console.warn('[DU] script already loaded; skipping'); /* stop */ throw 0; }
+window.__DU_SCRIPT_ACTIVE__ = true;
 /* donor-universe.js — WebGL triangle → auto 3D galaxy (round, color-coded dots) + working toolbar + 2D fallback
    FIX: single WebGL context declaration (no "Identifier 'gl' has already been declared")
 */
@@ -330,3 +332,4 @@
     setStatus('Canvas 2D running.');
   }
 })();
+
