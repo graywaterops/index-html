@@ -1,5 +1,6 @@
-/* donor-universe.js — WebGL triangle → auto 3D galaxy (round, color-coded dots) + working toolbar + 2D fallback */
-
+/* donor-universe.js — WebGL triangle → auto 3D galaxy (round, color-coded dots) + working toolbar + 2D fallback
+   FIX: single WebGL context declaration (no "Identifier 'gl' has already been declared")
+*/
 (() => {
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
@@ -12,19 +13,18 @@
   const setStatus = (m) => { if (statusEl) statusEl.textContent = 'Status: ' + m; console.log('[DonorUniverse]', m); };
   const fmt$ = (n) => n.toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
 
-  // ---------- utils ----------
+  // ---------- utilities ----------
   function xmur3(str){for(var i=0,h=1779033703^str.length;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),3432918353),h=h<<13|h>>>19;return function(){h=Math.imul(h^(h>>>16),2246822507);h=Math.imul(h^(h>>>13),3266489909);return(h^(h>>>16))>>>0}}
   function mulberry32(a){return function(){var t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
   const mkRNG = (seed) => { const s=xmur3(String(seed))(); return mulberry32(s); };
   function mkBuf(gl, target, data){ const b=gl.createBuffer(); gl.bindBuffer(target,b); gl.bufferData(target,data,gl.STATIC_DRAW); return b; }
   function sh(gl,type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
   function link(gl,vsSrc,fsSrc){ const p=gl.createProgram(); gl.attachShader(p,sh(gl,gl.VERTEX_SHADER,vsSrc)); gl.attachShader(p,sh(gl,gl.FRAGMENT_SHADER,fsSrc)); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
-  function resizeGL(){ if(!gl || !glCanvas) return; const dpr=window.devicePixelRatio||1; const w=glCanvas.clientWidth, h=glCanvas.clientHeight; glCanvas.width=Math.max(1,w*dpr); glCanvas.height=Math.max(1,h*dpr); gl.viewport(0,0,glCanvas.width,glCanvas.height); }
 
-  // Make sure the canvas area has height (Squarespace sometimes collapses)
+  // ensure canvas area has height (Squarespace can collapse)
   (function ensureVisibleSize(){ const wrap=glCanvas?.parentElement; if(wrap && wrap.clientHeight<200){ wrap.style.minHeight='70vh'; wrap.style.display='block'; }})();
 
-  // ---------- sanity ----------
+  // sanity check
   (function verifyDOM(){
     const missing=[];
     if(!statusEl) missing.push('#status');
@@ -35,14 +35,17 @@
     if(missing.length){ setStatus('Error: missing DOM ids: '+missing.join(', ')); }
   })();
 
-  // ---------- WebGL or fallback ----------
-  let gl=null; try { gl = glCanvas.getContext('webgl',{antialias:true,alpha:false}); } catch {}
+  // ---------- WebGL (single declaration!) ----------
+  let gl = null;                                // <<<<<<<<<<<<<<<<<<<<<< SINGLE DECLARATION
+  try { gl = glCanvas.getContext('webgl', {antialias:true, alpha:false}); } catch {}
+  function resizeGL(){ if(!gl||!glCanvas) return; const dpr=window.devicePixelRatio||1; const w=glCanvas.clientWidth,h=glCanvas.clientHeight; glCanvas.width=Math.max(1,w*dpr); glCanvas.height=Math.max(1,h*dpr); gl.viewport(0,0,glCanvas.width,glCanvas.height); }
+
   if(!gl){ setStatus('WebGL not available — using Canvas 2D.'); run2D(); return; }
 
   // Yellow triangle smoke test
   try { runTriangle(gl); setStatus('WebGL triangle OK — loading galaxy…'); } catch(e){ setStatus('Triangle error: '+(e?.message||e)); run2D(); return; }
 
-  // single guarded boot
+  // Guarded boot
   if(!window.__DU_BOOTED__){ window.__DU_BOOTED__=true; setTimeout(()=> runGalaxy(gl), 250); }
 
   // ===== TRIANGLE =====
@@ -67,55 +70,52 @@
     if(window.__DU_GALAXY_ACTIVE__){ setStatus('Galaxy already running'); return; }
     window.__DU_GALAXY_ACTIVE__=true;
 
-    // --- create toolbar (so controls always exist) ---
-    const bar = document.createElement('div');
-    bar.id = 'du-toolbar';
-    bar.style.cssText = 'position:absolute;right:14px;top:14px;z-index:20;display:flex;gap:10px;';
-    const mkBtn = (label,id) => { const b=document.createElement('button'); b.id=id; b.textContent=label; b.style.cssText='padding:6px 10px;border-radius:10px;background:#131a2f;color:#cfe1ff;border:1px solid #2a355a;cursor:pointer;font-size:12px;'; return b; };
-    const bPlay  = mkBtn('⏸ Play/Pause','du-play');
-    const bEdges = mkBtn('Hide Edges','du-edges');
-    const bYell  = mkBtn('Yellow Dots','du-yellow');
-    bar.append(bPlay,bEdges,bYell);
-    // put toolbar in same stacking context as canvas
-    if(glCanvas && glCanvas.parentElement) glCanvas.parentElement.style.position='relative', glCanvas.parentElement.appendChild(bar);
+    // --- toolbar (guaranteed controls) ---
+    if(!document.getElementById('du-toolbar')){
+      const bar=document.createElement('div');
+      bar.id='du-toolbar';
+      bar.style.cssText='position:absolute;right:14px;top:14px;z-index:20;display:flex;gap:10px;';
+      const mkBtn=(label,id)=>{const b=document.createElement('button'); b.id=id; b.textContent=label; b.style.cssText='padding:6px 10px;border-radius:10px;background:#131a2f;color:#cfe1ff;border:1px solid #2a355a;cursor:pointer;font-size:12px;'; return b;};
+      bar.append(mkBtn('⏸ Play/Pause','du-play'), mkBtn('Hide Edges','du-edges'), mkBtn('Yellow Dots','du-yellow'));
+      if(glCanvas && glCanvas.parentElement){ glCanvas.parentElement.style.position='relative'; glCanvas.parentElement.appendChild(bar); }
+    }
+    const btnPlay=document.getElementById('du-play');
+    const btnEdges=document.getElementById('du-edges');
+    const btnYellow=document.getElementById('du-yellow');
 
     setStatus('Galaxy running — rotate (left‑drag), pan (right/Shift/Ctrl‑drag), wheel to zoom.');
 
-    // ---- build donor model (more greens/reds so colors are obvious) ----
-    const P={ roots:250, radius:800, jitter:36, cap:20000, seed:'universe-v4' };
+    // ---- build donor model ----
+    const P={ roots:250, radius:800, jitter:36, cap:20000, seed:'universe-fixed' };
     const rand=mkRNG(P.seed), randJ=mkRNG(P.seed+'j');
     const nodes=[], links=[], roots=[]; let id=0;
 
     function add(type,parent=null){
       if(nodes.length>=P.cap) return null;
-      const n={id:id++,type,parent,x:0,y:0,z:0,children:[]};
-      nodes.push(n);
+      const n={id:id++,type,parent,x:0,y:0,z:0,children:[]}; nodes.push(n);
       if(parent!=null){ links.push({source:parent,target:n.id}); nodes[parent].children.push(n.id); }
       return n;
     }
     function fib(n,r){ const pts=[],phi=Math.PI*(3-Math.sqrt(5));
-      for(let i=0;i<n;i++){ const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i;
-        pts.push({x:Math.cos(th)*rad*r,y:y*r,z:Math.sin(th)*rad*r}); }
-      return pts;
+      for(let i=0;i<n;i++){ const y=1-(i/Math.max(1,n-1))*2; const rad=Math.sqrt(Math.max(0,1-y*y)); const th=phi*i; pts.push({x:Math.cos(th)*rad*r,y:y*r,z:Math.sin(th)*rad*r}); } return pts;
     }
 
-    // Roots on sphere
+    // roots on sphere
     for(let i=0;i<P.roots;i++){ const r=add('dark'); roots.push(r.id); }
     const rootPts=fib(roots.length,P.radius);
     roots.forEach((rid,i)=>{ const r=nodes[rid]; r.x=rootPts[i].x; r.y=rootPts[i].y; r.z=rootPts[i].z; });
 
     const j=()=> (randJ()*2-1)*P.jitter;
 
-    // Each root: 1 light, 2–4 greens, each green spawns 2–5 reds
+    // each root: 1 light, 2–4 greens, each green spawns 2–5 reds
     for(const rid of roots){
       if(nodes.length>=P.cap) break;
       const p=nodes[rid];
       const l=add('light',rid); if(!l) break; l.x=p.x+j(); l.y=p.y+j(); l.z=p.z+j();
-      const greens=2 + ((rand()*3)|0); // 2..4
+      const greens=2 + ((rand()*3)|0);
       for(let gk=0; gk<greens && nodes.length<P.cap; gk++){
-        const g=add('green',rid); if(!g) break;
-        g.x=p.x+j(); g.y=p.y+j(); g.z=p.z+j();
-        const reds=2 + ((rand()*4)|0); // 2..5
+        const g=add('green',rid); if(!g) break; g.x=p.x+j(); g.y=p.y+j(); g.z=p.z+j();
+        const reds=2 + ((rand()*4)|0);
         for(let rk=0; rk<reds && nodes.length<P.cap; rk++){
           const r=add('red',g.id); if(!r) break; r.x=g.x+j(); r.y=g.y+j(); r.z=g.z+j();
         }
@@ -123,13 +123,12 @@
     }
 
     const N=nodes.length, E=links.length;
-    console.log('[DU] nodes',N,'edges',E);
 
-    // Colors & sizes (smaller to avoid blobs)
+    // per-type colors & sizes
     const COL={ dark:[0x1e/255,0x3a/255,0x8a/255], light:[0x93/255,0xc5/255,0xfd/255], green:[0x22/255,0xc5/255,0x5e/255], red:[0xef/255,0x44/255,0x44/255] };
     const SIZE={ dark:6.0, light:4.0, green:4.6, red:3.4 };
 
-    // Interleaved verts: center(3) + corner(2) + sizePx(1) + color(3) => 9 floats, 6 verts per star (2 triangles)
+    // interleaved verts: center(3), corner(2), sizePx(1), color(3) — 6 verts per star
     const verts=new Float32Array(N*6*9);
     const quad=[-1,-1, 1,-1, 1,1,  -1,-1, 1,1, -1,1];
     let off=0;
@@ -146,7 +145,7 @@
     }
     const bufStars=mkBuf(gl,gl.ARRAY_BUFFER,verts);
 
-    // Edges (faint)
+    // edges (faint)
     const epos=new Float32Array(E*6);
     for(let i=0;i<E;i++){ const l=links[i], a=nodes[l.source], b=nodes[l.target]; epos.set([a.x,a.y,a.z,b.x,b.y,b.z], i*6); }
     const bufEdges=mkBuf(gl,gl.ARRAY_BUFFER,epos);
@@ -155,7 +154,7 @@
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.disable(gl.DEPTH_TEST);
 
-    // Shaders
+    // shaders
     const vsStars=`
       attribute vec3 aCenter;
       attribute vec2 aCorner;  // unit -1..1
@@ -191,9 +190,9 @@
       void main(){
         if(uYellow > 0.5){ gl_FragColor = vec4(1.0,1.0,0.0,1.0); return; }
         float r2 = dot(vCorner, vCorner);
-        if (r2 > 1.0) discard;
+        if (r2 > 1.0) discard;                 // circular mask
         float edge = smoothstep(1.0, 0.7, 1.0 - r2);
-        gl_FragColor = vec4(vCol, edge);
+        gl_FragColor = vec4(vCol, edge);       // soft edge
       }`;
 
     const vsLines=`
@@ -237,15 +236,14 @@
       uCol: gl.getUniformLocation(progLines,'uCol')
     };
 
-    // --- camera & controls ---
+    // --- camera & toolbar wiring ---
     let yaw=0, pitch=0, zoom=1.0, panPxX=0, panPxY=0;
     const worldScale = 1.0 / (P.radius * 1.25);
-    let autoSpin = true, showEdges = true, yellow = false;
+    let autoSpin=true, showEdges=true, yellow=false;
 
-    // button events (created above)
-    bPlay.onclick  = () => { autoSpin = !autoSpin; bPlay.textContent = autoSpin ? '⏸ Play/Pause' : '⏵ Play'; };
-    bEdges.onclick = () => { showEdges = !showEdges; bEdges.textContent = showEdges ? 'Hide Edges' : 'Show Edges'; };
-    bYell.onclick  = () => { yellow = !yellow; bYell.textContent = yellow ? 'Normal Dots' : 'Yellow Dots'; };
+    if(btnPlay)  btnPlay.onclick  = ()=>{ autoSpin=!autoSpin; btnPlay.textContent = autoSpin?'⏸ Play/Pause':'⏵ Play'; };
+    if(btnEdges) btnEdges.onclick = ()=>{ showEdges=!showEdges; btnEdges.textContent = showEdges?'Hide Edges':'Show Edges'; };
+    if(btnYellow)btnYellow.onclick= ()=>{ yellow=!yellow; btnYellow.textContent = yellow?'Normal Dots':'Yellow Dots'; };
 
     // mouse: left rotate, right/shift/ctrl pan, wheel zoom
     let dragging=false, rotating=false, lastX=0, lastY=0;
@@ -266,7 +264,7 @@
 
     window.addEventListener('resize', resizeGL); resizeGL();
 
-    // --- render loop ---
+    // --- draw loop ---
     (function draw(){
       resizeGL();
       if(autoSpin) yaw += 0.003;
@@ -308,7 +306,7 @@
       requestAnimationFrame(draw);
     })();
 
-    // simple live counters (front-end only)
+    // simple live counters (front‑end demo)
     let tick=0;(function bump(){ tick++; const coins=Math.min(N, tick*4); coinsEl.textContent=coins.toLocaleString('en-US'); raisedEl.textContent=fmt$(coins*50); setTimeout(bump,500); })();
   }
 
@@ -331,7 +329,4 @@
 
     setStatus('Canvas 2D running.');
   }
-
-  // grab GL once for resize
-  let gl=null; try { gl=glCanvas.getContext('webgl',{antialias:true,alpha:false}); } catch {}
 })();
