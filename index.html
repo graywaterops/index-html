@@ -7,51 +7,35 @@
 <style>
   :root{ --bg:#000; --panel:#111826; --text:#eaf0ff; --muted:#9aa3c9; --border:#1f2a4d; --accent:#6ee7ff; }
   html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
-  /* Force a visible viewport for the canvas even inside theme wrappers */
-  .universe-wrap{
-    position:relative; width:100%; min-height:80vh; background:#000; overflow:hidden;
-    /* SquareSpace/Page CSS guardrails */
-    isolation:isolate; z-index:0;
-  }
-  #gl, #cv2d{position:absolute; inset:0; width:100%; height:100%; display:block}
-  /* HUD */
-  .pill{
-    position:fixed; left:50%; top:10px; transform:translateX(-50%);
-    background:var(--panel); border:1px solid var(--border); border-radius:999px;
-    padding:6px 10px; font-size:13px; z-index:3; opacity:.96
-  }
+  .universe-wrap{ position:relative; width:100%; min-height:80vh; background:#000; overflow:hidden; isolation:isolate; }
+  #gl{ position:absolute; inset:0; width:100%; height:100%; display:block; z-index:2; pointer-events:auto; touch-action:none; cursor:grab; }
+  #cv2d{ position:absolute; inset:0; width:100%; height:100%; z-index:1; display:none; pointer-events:none; }
+  .pill{ position:fixed; left:50%; top:10px; transform:translateX(-50%); background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:6px 10px; font-size:13px; z-index:5; opacity:.96 }
   #raised{ margin-left:10px }
-  #status{
-    position:fixed; left:10px; bottom:10px; z-index:3;
-    background:var(--panel); border:1px solid var(--border); border-radius:8px;
-    padding:6px 10px; font-size:12px; color:var(--muted); max-width:78vw; white-space:pre-wrap
-  }
-  #timeline{position:fixed; left:50%; bottom:12px; transform:translateX(-50%); z-index:3;
-    width:min(520px,70vw); height:8px; background:var(--panel); border:1px solid var(--border); border-radius:999px; overflow:hidden}
-  #fill{height:100%; width:0%; background:var(--accent)}
-  /* simple buttons (no keys so host page keybinds can’t interfere) */
-  .toolbar{position:fixed; right:10px; top:10px; z-index:3; display:flex; gap:8px}
-  .btn{cursor:pointer; background:var(--panel); color:#eaf0ff; border:1px solid var(--border);
-       border-radius:999px; padding:6px 12px; font-size:13px}
+  #status{ position:fixed; left:10px; bottom:10px; z-index:5; background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:6px 10px; font-size:12px; color:var(--muted); max-width:78vw; white-space:pre-wrap }
+  #timeline{ position:fixed; left:50%; bottom:12px; transform:translateX(-50%); z-index:5; width:min(520px,70vw); height:8px; background:var(--panel); border:1px solid var(--border); border-radius:999px; overflow:hidden }
+  #fill{ height:100%; width:0%; background:var(--accent) }
+  .toolbar{ position:fixed; right:10px; top:10px; z-index:5; display:flex; gap:8px }
+  .btn{ cursor:pointer; background:var(--panel); color:#eaf0ff; border:1px solid var(--border); border-radius:999px; padding:6px 12px; font-size:13px }
 </style>
 </head>
 <body>
   <div class="universe-wrap">
-    <canvas id="gl"></canvas>   <!-- WebGL -->
-    <canvas id="cv2d"></canvas> <!-- 2D fallback (hidden unless needed) -->
+    <canvas id="gl"></canvas>   <!-- WebGL (top) -->
+    <canvas id="cv2d"></canvas> <!-- 2D fallback (hidden) -->
   </div>
 
   <div class="pill">Coins: <b id="coins">0</b> &nbsp; Raised: <b id="raised">$0</b></div>
   <div class="toolbar">
-    <button id="btnPlay" class="btn">⏸ Play/Pause</button>
-    <button id="btnAll" class="btn">Show All</button>
+    <button id="btnPlay"  class="btn">⏸ Play/Pause</button>
+    <button id="btnAll"   class="btn">Show All</button>
     <button id="btnDebug" class="btn">Yellow Dots</button>
   </div>
   <div id="timeline"><div id="fill"></div></div>
   <div id="status">Status: initializing…</div>
 
-  <!-- No inline JS. Load the app bundle. Adjust path if you place the JS elsewhere. -->
-<script src="https://graywaterops.github.io/index-html/donor-universe.js?v=17" defer></script>
+  <!-- App bundle (bump the v param after updates to bust cache) -->
+  <script src="https://graywaterops.github.io/index-html/donor-universe.js?v=18" defer></script>
   <noscript><div style="color:#fff;padding:20px">This page requires JavaScript.</div></noscript>
 </body>
 </html>
