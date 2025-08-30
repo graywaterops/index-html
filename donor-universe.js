@@ -1,4 +1,4 @@
-/* Donor Universe — WebGL with 2D fallback (no external libs) */
+/* Donor Universe — WebGL with 2D fallback (failsafe visible) */
 (() => {
   const $ = (id) => document.getElementById(id);
   const elGL = $('gl');
@@ -7,9 +7,16 @@
   const raisedEl = $('raised');
   const statusEl = $('status');
   const fillEl = $('fill');
-  const btnPlay = $('btnPlay');
-  const btnAll = $('btnAll');
-  const btnDebug = $('btnDebug');
+
+  // Add an Auto-Fit button to your toolbar (safe if it already exists)
+  const tb = document.querySelector('.toolbar') || (function(){
+    const d=document.createElement('div'); d.className='toolbar'; document.body.appendChild(d); return d;
+  })();
+  let btnPlay = $('btnPlay'), btnAll = $('btnAll'), btnDebug = $('btnDebug');
+  if (!btnPlay) { btnPlay = document.createElement('button'); btnPlay.id='btnPlay'; btnPlay.className='btn'; btnPlay.textContent='⏸ Play/Pause'; tb.appendChild(btnPlay); }
+  if (!btnAll)  { btnAll  = document.createElement('button'); btnAll.id='btnAll'; btnAll.className='btn'; btnAll.textContent='Show All'; tb.appendChild(btnAll); }
+  if (!btnDebug){ btnDebug= document.createElement('button'); btnDebug.id='btnDebug'; btnDebug.className='btn'; btnDebug.textContent='Yellow Dots'; tb.appendChild(btnDebug); }
+  const btnFit = document.createElement('button'); btnFit.className='btn'; btnFit.textContent='Auto-Fit'; tb.appendChild(btnFit);
 
   const setStatus = (m) => (statusEl.textContent = 'Status: ' + m);
   const fmt$ = (n) => n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -36,8 +43,15 @@
     roots: 250,
     lightDepth: 10, lightProb: .85, lightFan: 1.5, lightDecay: .90,
     extraDepth: 9,  extraProb: .85, extraFan: 1.8, extraDecay: .88,
-    radius: 800, jitter: 36, cap: 20000, seed: 'universe-gh-pages'
+    radius: 800, jitter: 36, cap: 20000, seed: 'universe-gh-pages-failsafe'
   };
+
+  function ensureVisibleSize(){
+    const wrap = elGL.parentElement;
+    const h = wrap.clientHeight;
+    if (h < 200) { wrap.style.minHeight = '80vh'; wrap.style.display='block'; }
+  }
+  ensureVisibleSize();
 
   /* ---------- Build model (one light child per parent) ---------- */
   function buildModel() {
@@ -90,57 +104,53 @@
     const births=byBirth.map(n=>n.birth);
     let acc=0; const giftPrefix=byBirth.map(n=>{acc+=n.gift; return acc;});
     const maxBirth=nodes.reduce((m,n)=>Math.max(m,n.birth),0);
-    return {nodes,links,roots,byBirth,births,giftPrefix,maxBirth};
+    // estimate radius for auto-fit (roots sphere + jitter)
+    const estR = P.radius + P.jitter*3;
+    return {nodes,links,roots,byBirth,births,giftPrefix,maxBirth,estR};
   }
 
-  /* ---------- Sizing & layout guards ---------- */
-  function ensureVisibleSize() {
-    // If the host theme shoves the canvas into a zero-height section, force height.
-    const wrap = elGL.parentElement;
-    const cs = getComputedStyle(wrap);
-    if (wrap.clientHeight < 200 || cs.display === 'none') {
-      wrap.style.minHeight = '80vh';
-      wrap.style.display = 'block';
-    }
-  }
-  ensureVisibleSize();
-
-  /* ---------- Try WebGL, else fallback to 2D ---------- */
+  /* ---------- Try WebGL or fallback ---------- */
   let gl = null;
   try { gl = elGL.getContext('webgl', {antialias:true, alpha:false}); } catch {}
-  if (!gl) {
-    setStatus('WebGL not available in this container — using 2D fallback.');
-    run2D();
-    return;
-  }
-
+  if (!gl) { setStatus('WebGL not available — using 2D fallback.'); return run2D(); }
   runWebGL(gl);
 
-  /* ======================= WebGL (billboard stars) ======================= */
+  /* ======================= WebGL billboard stars ======================= */
   function runWebGL(gl) {
-    setStatus('WebGL starting…');
-
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.enable(gl.DEPTH_TEST);
 
-    function resize(){ const dpr=window.devicePixelRatio||1;
-      const w=elGL.clientWidth, h=elGL.clientHeight;
-      elGL.width=Math.max(1,w*dpr); elGL.height=Math.max(1,h*dpr);
-      gl.viewport(0,0,elGL.width,elGL.height);
-    }
+    function resize(){ const dpr=window.devicePixelRatio||1; const w=elGL.clientWidth, h=elGL.clientHeight; elGL.width=Math.max(1,w*dpr); elGL.height=Math.max(1,h*dpr); gl.viewport(0,0,elGL.width,elGL.height); }
     window.addEventListener('resize', resize); resize();
 
     const model = buildModel();
     const N = model.nodes.length, E = model.links.length;
+    // Colors & sizes (visible)
+    const C_D=[0x1e/255,0x3a/255,0x8a/255], C_L=[0x93/255,0xc5/255,0xfd/255], C_G=[0x22/255,0xc5/255,0x5e/255], C_R=[0xef/255,0x44/255,0x44/255];
+    const baseSize = (t)=> t==='dark'?10.0 : t==='light'?9.5 : t==='green'?9.8 : 9.2; // bigger so you SEE THEM
 
-    // Colors
-    const C_D=[0x1e/255,0x3a/255,0x8a/255], C_L=[0x93/255,0xc5/255,0xfd/255],
-          C_G=[0x22/255,0xc5/255,0x5e/255], C_R=[0xef/255,0x44/255,0x44/255];
+    // Billboards: 4 vertices per star
+    const centers=new Float32Array(N*4*3), corners=new Float32Array(N*4*2), sizes=new Float32Array(N*4), births=new Float32Array(N*4), colors=new Float32Array(N*4*3);
+    const quad=[-1,-1, 1,-1, 1,1, -1,1];
+    for(let i=0;i<N;i++){
+      const n=model.nodes[i]; const c=n.type==='dark'?C_D:n.type==='light'?C_L:n.type==='green'?C_G:C_R; const s=baseSize(n.type);
+      for(let v=0; v<4; v++){
+        const vi=i*4+v;
+        centers.set([n.x,n.y,n.z], vi*3);
+        corners.set([quad[v*2], quad[v*2+1]], vi*2);
+        sizes[vi]=s; births[vi]=n.birth; colors.set(c, vi*3);
+      }
+    }
+    // Lines (edges)
+    const epos=new Float32Array(E*6);
+    for(let i=0;i<E;i++){const l=model.links[i], a=model.nodes[l.source], b=model.nodes[l.target]; epos.set([a.x,a.y,a.z,b.x,b.y,b.z], i*6);}
 
-    // Billboard shader (see: vertex shifts clip.xy by corner * ndc * clip.w)
+    function mkBuf(target,data){ const b=gl.createBuffer(); gl.bindBuffer(target,b); gl.bufferData(target,data,gl.STATIC_DRAW); return b; }
+    const bCenter=mkBuf(gl.ARRAY_BUFFER,centers), bCorner=mkBuf(gl.ARRAY_BUFFER,corners), bSize=mkBuf(gl.ARRAY_BUFFER,sizes), bBirth=mkBuf(gl.ARRAY_BUFFER,births), bColor=mkBuf(gl.ARRAY_BUFFER,colors), bEdges=mkBuf(gl.ARRAY_BUFFER,epos);
+
+    // Shaders
     const vs=`
-    attribute vec3 aCenter; attribute vec2 aCorner; attribute float aSizePx;
-    attribute float aBirth; attribute vec3 aColor;
+    attribute vec3 aCenter; attribute vec2 aCorner; attribute float aSizePx; attribute float aBirth; attribute vec3 aColor;
     uniform mat4 uMVP; uniform vec2 uViewport; uniform float uTime; uniform float uRamp; uniform float uShowAll;
     varying vec3 vCol; varying float vA; varying vec2 vUV;
     void main(){
@@ -148,137 +158,102 @@
       float born = (uShowAll>0.5)? 1.0 : clamp((uTime - aBirth)/uRamp, 0.0, 1.0);
       vA = born; vCol = aColor; vUV = aCorner;
       float ndc = (aSizePx / uViewport.y) * 2.0;
-      clip.xy += aCorner * ndc * clip.w;
-      gl_Position = clip;
+      clip.xy += aCorner * ndc * clip.w; gl_Position = clip;
     }`;
     const fs=`
-    precision mediump float;
-    varying vec3 vCol; varying float vA; varying vec2 vUV;
-    uniform float uYellow;
+    precision mediump float; varying vec3 vCol; varying float vA; varying vec2 vUV; uniform float uYellow;
     void main(){
       if(uYellow>0.5){ gl_FragColor=vec4(1.0,1.0,0.0,1.0); return; }
       vec2 uv=vUV; float r2=dot(uv,uv); if(r2>1.0) discard;
       float edge = smoothstep(1.0,0.6,1.0-r2);
-      gl_FragColor = vec4(vCol, max(0.0,vA) * edge);
+      gl_FragColor=vec4(vCol, max(0.0,vA)*edge);
     }`;
     const vsL=`attribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position=uMVP*vec4(aPos,1.0); }`;
     const fsL=`precision mediump float; uniform vec4 uCol; void main(){ gl_FragColor=uCol; }`;
-
-    function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
-      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
-    function prog(vsSrc,fsSrc){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,vsSrc)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fsSrc)); gl.linkProgram(p);
-      if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
-
+    function sh(type,src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; }
+    function prog(vsSrc,fsSrc){ const p=gl.createProgram(); gl.attachShader(p,sh(gl.VERTEX_SHADER,vsSrc)); gl.attachShader(p,sh(gl.FRAGMENT_SHADER,fsSrc)); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; }
     let pStars, pLines;
-    try { pStars = prog(vs,fs); pLines = prog(vsL,fsL); }
-    catch (e) { setStatus('Shader compile/link failed. Falling back to 2D. ' + e.message); run2D(); return; }
+    try { pStars = prog(vs,fs); pLines = prog(vsL,fsL); } catch (e) { setStatus('Shader error: '+e.message); return run2D(); }
 
-    // Build buffers for quads (4 verts/star)
-    function baseSize(t){ return t==='dark'?7.0 : t==='light'?6.5 : t==='green'?6.8 : 6.2; } // visible
-    const corners=[-1,-1, 1,-1, 1,1, -1,1];
-
-    const starCenter=new Float32Array(N*4*3);
-    const starCorner=new Float32Array(N*4*2);
-    const starSize  =new Float32Array(N*4);
-    const starBirth =new Float32Array(N*4);
-    const starColor =new Float32Array(N*4*3);
-
-    for(let i=0;i<N;i++){
-      const n=model.nodes[i];
-      const c = n.type==='dark'?C_D : n.type==='light'?C_L : n.type==='green'?C_G : C_R;
-      const s = baseSize(n.type);
-      for(let v=0; v<4; v++){
-        const vi=i*4+v;
-        starCenter.set([n.x,n.y,n.z], vi*3);
-        starCorner.set([corners[v*2],corners[v*2+1]], vi*2);
-        starSize[vi]  = s;
-        starBirth[vi] = n.birth;
-        starColor.set(c, vi*3);
-      }
+    // Camera and Auto-Fit
+    let yaw=0, pitch=0, dist=1400, panX=0, panY=0, drag=false, rot=false, lx=0,ly=0;
+    function autoFit(){
+      // fit galaxy of radius estR into view with margin
+      const margin = 1.3;
+      dist = model.estR * margin / Math.sin(Math.PI/6); // rough fit
+      panX=0; panY=0; yaw=0; pitch=0;
     }
+    autoFit();
+    btnFit.onclick = autoFit;
 
-    const edgePos=new Float32Array(E*6);
-    for(let i=0;i<E;i++){ const l=model.links[i], a=model.nodes[l.source], b=model.nodes[l.target];
-      edgePos.set([a.x,a.y,a.z,b.x,b.y,b.z], i*6);
-    }
-
-    function mkBuf(target,data){ const b=gl.createBuffer(); gl.bindBuffer(target,b); gl.bufferData(target,data,gl.STATIC_DRAW); return b; }
-    const bufCenter=mkBuf(gl.ARRAY_BUFFER, starCenter);
-    const bufCorner=mkBuf(gl.ARRAY_BUFFER, starCorner);
-    const bufSize  =mkBuf(gl.ARRAY_BUFFER, starSize);
-    const bufBirth =mkBuf(gl.ARRAY_BUFFER, starBirth);
-    const bufColor =mkBuf(gl.ARRAY_BUFFER, starColor);
-    const bufEdges =mkBuf(gl.ARRAY_BUFFER, edgePos);
-
-    // Simple camera
-    let yaw=0, pitch=0, dist=1400, panX=0, panY=0, dragging=false, rotating=false, lx=0,ly=0;
-    elGL.addEventListener('mousedown',e=>{dragging=true; rotating=(e.button===0&&!e.ctrlKey); lx=e.clientX; ly=e.clientY;});
-    window.addEventListener('mouseup',()=>dragging=false);
-    window.addEventListener('mousemove',e=>{
-      if(!dragging) return;
+    elGL.addEventListener('mousedown',e=>{drag=true; rot=(e.button===0&&!e.ctrlKey); lx=e.clientX; ly=e.clientY;});
+    window.addEventListener('mouseup',()=>drag=false);
+    window.addEventListener('mousemove',e=>{ if(!drag) return;
       const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
-      if(rotating){ yaw+=dx*0.005; pitch=Math.max(-1.2,Math.min(1.2,pitch+dy*0.005)); } else { panX+=dx; panY+=dy; }
+      if(rot){ yaw+=dx*0.005; pitch=Math.max(-1.2,Math.min(1.2,pitch+dy*0.005)); } else { panX+=dx; panY+=dy; }
     });
-    elGL.addEventListener('wheel',e=>{e.preventDefault(); dist=Math.max(200,Math.min(4000,dist+e.deltaY));},{passive:false});
+    elGL.addEventListener('wheel',e=>{ e.preventDefault(); dist=Math.max(200,Math.min(5000,dist+e.deltaY)); }, {passive:false});
 
-    // Matrices
-    function m4pers(out,fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);
-      out[0]=f/aspect;out[1]=0;out[2]=0;out[3]=0; out[4]=0;out[5]=f;out[6]=0;out[7]=0;
-      out[8]=0;out[9]=0;out[10]=(far+near)*nf;out[11]=-1; out[12]=0;out[13]=0;out[14]=2*far*near*nf;out[15]=0; return out;}
-    function m4look(out,eye,ctr,up){const [ex,ey,ez]=eye,[cx,cy,cz]=ctr,[ux,uy,uz]=up;
-      let zx=ex-cx,zy=ey-cy,zz=ez-cz; let zl=1/Math.hypot(zx,zy,zz); zx*=zl; zy*=zl; zz*=zl;
-      let xx=uy*zz-uz*zy, xy=uz*zx-ux*zz, xz=ux*zy-uy*zx; let xl=1/Math.hypot(xx,xy,xz); xx*=xl; xy*=xl; xz*=xl;
-      let yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
-      out[0]=xx;out[1]=yx;out[2]=zx;out[3]=0; out[4]=xy;out[5]=yy;out[6]=zy;out[7]=0; out[8]=xz;out[9]=yz;out[10]=zz;out[11]=0;
-      out[12]=-(xx*ex+xy*ey+xz*ez); out[13]=-(yx*ex+yy*ey+yz*ez); out[14]=-(zx*ex+zy*ey+zz*ez); out[15]=1; return out;}
-    function m4mul(out,a,b){const o=new Float32Array(16); for(let r=0;r<4;r++)for(let c=0;c<4;c++){o[r*4+c]=a[r*4+0]*b[0*4+c]+a[r*4+1]*b[1*4+c]+a[r*4+2]*b[2*4+c]+a[r*4+3]*b[3*4+c];} out.set(o); return out;}
-
-    // Bloom + controls
-    const BLOOM={playing:true,t:0,duration:model.maxBirth+2000,start:performance.now(), showAll:false, yellow:false};
-
-    btnPlay.onclick = ()=>{ BLOOM.playing=!BLOOM.playing; if(BLOOM.playing) BLOOM.start=performance.now()-BLOOM.t; setStatus(BLOOM.playing?'playing':'paused'); };
+    // Bloom & controls: FAILSAFE ON at start
+    const BLOOM={playing:true,t:0,duration:model.maxBirth+2000,start:performance.now(), showAll:true, yellow:true};
+    btnPlay.onclick = ()=>{ BLOOM.playing=!BLOOM.playing; if(BLOOM.playing) BLOOM.start=performance.now()-BLOOM.t; };
     btnAll.onclick  = ()=>{ BLOOM.showAll=!BLOOM.showAll; btnAll.textContent = BLOOM.showAll?'Show Only Born':'Show All'; };
     btnDebug.onclick= ()=>{ BLOOM.yellow=!BLOOM.yellow; btnDebug.textContent = BLOOM.yellow?'Normal Dots':'Yellow Dots'; };
 
     function updateCounters(){
       const idx = BLOOM.showAll ? model.nodes.length : upperBound(model.births, BLOOM.t);
-      const coins=idx, gifts = idx? model.giftPrefix[idx-1] : 0;
+      const coins=idx, gifts=idx?model.giftPrefix[idx-1]:0;
       coinsEl.textContent = coins.toLocaleString('en-US');
-      raisedEl.textContent = fmt$(Math.round(coins*50 + gifts));
+      raisedEl.textContent = fmt$(Math.round(coins*50+gifts));
       fillEl.style.width = `${Math.min(100,(BLOOM.t/BLOOM.duration)*100)}%`;
     }
 
     function render(){
       if(BLOOM.playing){
-        BLOOM.t = Math.min(BLOOM.duration, performance.now()-BLOOM.start);
-        if(BLOOM.t>=BLOOM.duration){ BLOOM.playing=false; setStatus('finished — click Play to replay'); }
+        BLOOM.t=Math.min(BLOOM.duration, performance.now()-BLOOM.start);
       }
       updateCounters();
 
       gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       const dpr=window.devicePixelRatio||1, w=elGL.width/dpr, h=elGL.height/dpr;
-      const proj=new Float32Array(16), view=new Float32Array(16), mvp=new Float32Array(16);
-      m4pers(proj, Math.PI/3, w/h, 0.1, 5000);
-      const cx=Math.sin(yaw)*dist*Math.cos(pitch), cy=Math.sin(pitch)*dist, cz=Math.cos(yaw)*dist*Math.cos(pitch);
-      const panScale=dist/900;
-      m4look(view, [cx - panX*panScale, cy + panY*panScale, cz], [ -panX*panScale, 0+panY*panScale, 0 ], [0,1,0]);
-      m4mul(mvp, proj, view);
 
-      // edges (brighter so you SEE them)
+      // MVP
+      const proj=new Float32Array(16), view=new Float32Array(16), mvp=new Float32Array(16);
+      (function m4pers(out,fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);
+        out[0]=f/aspect;out[1]=0;out[2]=0;out[3]=0; out[4]=0;out[5]=f;out[6]=0;out[7]=0; out[8]=0;out[9]=0;out[10]=(far+near)*nf;out[11]=-1; out[12]=0;out[13]=0;out[14]=2*far*near*nf;out[15]=0; return out;})(proj, Math.PI/3, w/h, 0.1, 5000);
+      (function m4look(out,eye,ctr,up){const [ex,ey,ez]=eye,[cx,cy,cz]=ctr,[ux,uy,uz]=up;
+        let zx=ex-cx,zy=ey-cy,zz=ez-cz; let zl=1/Math.hypot(zx,zy,zz); zx*=zl; zy*=zl; zz*=zl;
+        let xx=uy*zz-uz*zy, xy=uz*zx-ux*zz, xz=ux*zy-uy*zx; let xl=1/Math.hypot(xx,xy,xz); xx*=xl; xy*=xl; xz*=xl;
+        let yx=zy*xz-zz*xy, yy=zz*xx-zx*xz, yz=zx*xy-zy*xx;
+        out[0]=xx;out[1]=yx;out[2]=zx;out[3]=0; out[4]=xy;out[5]=yy;out[6]=zy;out[7]=0; out[8]=xz;out[9]=yz;out[10]=zz;out[11]=0;
+        const panScale=dist/900;
+        out[12]=-(xx*(Math.sin(yaw)*dist*Math.cos(pitch) - panX*panScale)+xy*(Math.sin(pitch)*dist + panY*panScale)+xz*(Math.cos(yaw)*dist*Math.cos(pitch)));
+        out[13]=-(yx*(Math.sin(yaw)*dist*Math.cos(pitch) - panX*panScale)+yy*(Math.sin(pitch)*dist + panY*panScale)+yz*(Math.cos(yaw)*dist*Math.cos(pitch)));
+        out[14]=-(zx*(Math.sin(yaw)*dist*Math.cos(pitch) - panX*panScale)+zy*(Math.sin(pitch)*dist + panY*panScale)+zz*(Math.cos(yaw)*dist*Math.cos(pitch)));
+        out[15]=1; return out;})(view, [0,0,0], [0,0,0], [0,1,0]);
+      (function m4mul(out,a,b){const o=new Float32Array(16); for(let r=0;r<4;r++)for(let c=0;c<4;c++){o[r*4+c]=a[r*4+0]*b[0*4+c]+a[r*4+1]*b[1*4+c]+a[r*4+2]*b[2*4+c]+a[r*4+3]*b[3*4+c];} out.set(o); return out;})(mvp, proj, view);
+
+      // Lines (brighter)
       gl.useProgram(pLines);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufEdges);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bEdges);
       let loc=gl.getAttribLocation(pLines,'aPos'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
       gl.uniformMatrix4fv(gl.getUniformLocation(pLines,'uMVP'),false,mvp);
-      gl.uniform4f(gl.getUniformLocation(pLines,'uCol'), 0.36,0.42,0.58, BLOOM.showAll?0.6:0.3);
+      gl.uniform4f(gl.getUniformLocation(pLines,'uCol'), 0.36,0.42,0.58, BLOOM.showAll?0.6:0.35);
       gl.drawArrays(gl.LINES,0,E*2);
 
-      // stars
+      // Stars (billboards) — turn OFF depth test so they can’t hide
+      gl.disable(gl.DEPTH_TEST);
       gl.useProgram(pStars);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufCenter); loc=gl.getAttribLocation(pStars,'aCenter'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufCorner); loc=gl.getAttribLocation(pStars,'aCorner'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufSize);   loc=gl.getAttribLocation(pStars,'aSizePx'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,1,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufBirth);  loc=gl.getAttribLocation(pStars,'aBirth'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,1,gl.FLOAT,false,0,0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, bufColor);  loc=gl.getAttribLocation(pStars,'aColor'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+      // center
+      gl.bindBuffer(gl.ARRAY_BUFFER, bCenter); loc=gl.getAttribLocation(pStars,'aCenter'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
+      // corner
+      gl.bindBuffer(gl.ARRAY_BUFFER, bCorner); loc=gl.getAttribLocation(pStars,'aCorner'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+      // size
+      gl.bindBuffer(gl.ARRAY_BUFFER, bSize);   loc=gl.getAttribLocation(pStars,'aSizePx'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,1,gl.FLOAT,false,0,0);
+      // birth
+      gl.bindBuffer(gl.ARRAY_BUFFER, bBirth);  loc=gl.getAttribLocation(pStars,'aBirth'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,1,gl.FLOAT,false,0,0);
+      // color
+      gl.bindBuffer(gl.ARRAY_BUFFER, bColor);  loc=gl.getAttribLocation(pStars,'aColor'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0);
 
       gl.uniformMatrix4fv(gl.getUniformLocation(pStars,'uMVP'),false,mvp);
       gl.uniform2f(gl.getUniformLocation(pStars,'uViewport'), elGL.width, elGL.height);
@@ -287,85 +262,47 @@
       gl.uniform1f(gl.getUniformLocation(pStars,'uShowAll'), BLOOM.showAll?1.0:0.0);
       gl.uniform1f(gl.getUniformLocation(pStars,'uYellow'), BLOOM.yellow?1.0:0.0);
 
-      // TRIANGLE_FAN per star (4 verts each) → draw all in one go by relying on the attribute streams
       gl.drawArrays(gl.TRIANGLE_FAN, 0, N*4);
+      gl.enable(gl.DEPTH_TEST);
 
       requestAnimationFrame(render);
     }
     requestAnimationFrame(render);
-    setStatus('WebGL running');
+    setStatus('WebGL running (failsafe ON): use Yellow/Show-All/Auto-Fit buttons.');
   }
 
   /* ======================= Canvas 2D fallback ======================= */
   function run2D() {
-    el2D.style.display = 'block';
-    const cv = el2D, ctx = cv.getContext('2d');
-    function resize2D(){ const dpr=window.devicePixelRatio||1; const w=cv.clientWidth, h=cv.clientHeight; cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); }
-    window.addEventListener('resize', resize2D); resize2D();
-
-    const model = buildModel();
-    const BLOOM={playing:true,t:0,duration:model.maxBirth+2000,start:performance.now(), showAll:false, yellow:false};
-
-    btnPlay.onclick = ()=>{ BLOOM.playing=!BLOOM.playing; if(BLOOM.playing) BLOOM.start=performance.now()-BLOOM.t; };
-    btnAll.onclick  = ()=>{ BLOOM.showAll=!BLOOM.showAll; btnAll.textContent = BLOOM.showAll?'Show Only Born':'Show All'; };
-    btnDebug.onclick= ()=>{ BLOOM.yellow=!BLOOM.yellow; btnDebug.textContent = BLOOM.yellow?'Normal Dots':'Yellow Dots'; };
-
-    function updateCounters(){
-      const idx = BLOOM.showAll ? model.nodes.length : upperBound(model.births, BLOOM.t);
-      const coins=idx, gifts=idx? model.giftPrefix[idx-1] : 0;
-      coinsEl.textContent = coins.toLocaleString('en-US');
-      raisedEl.textContent = fmt$(Math.round(coins*50 + gifts));
-      fillEl.style.width = `${Math.min(100,(BLOOM.t/BLOOM.duration)*100)}%`;
-    }
-
-    // simple orbit-ish projection
+    el2D.style.display='block';
+    const cv=el2D, ctx=cv.getContext('2d');
+    function resize2D(){const dpr=window.devicePixelRatio||1; const w=cv.clientWidth,h=cv.clientHeight; cv.width=w*dpr; cv.height=h*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);}
+    window.addEventListener('resize',resize2D); resize2D();
+    const model=buildModel();
+    const BLOOM={playing:true,t:0,duration:model.maxBirth+2000,start:performance.now(), showAll:true, yellow:true};
+    // simple orbit
     let yaw=0,pitch=0,dist=1100,tx=0,ty=0,drag=false,rot=false,lx=0,ly=0,dpr=1;
-    el2D.addEventListener('mousedown',e=>{drag=true; rot=(e.button===2||e.ctrlKey)?true:false; lx=e.clientX; ly=e.clientY;});
+    el2D.addEventListener('mousedown',e=>{drag=true; rot=(e.button===2||e.ctrlKey); lx=e.clientX; ly=e.clientY;});
     window.addEventListener('mouseup',()=>drag=false);
     window.addEventListener('mousemove',e=>{ if(!drag) return; const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY; if(rot){yaw+=dx*0.005; pitch=Math.max(-1.2,Math.min(1.2,pitch+dy*0.005));} else {tx+=dx; ty+=dy;}});
-    el2D.addEventListener('wheel',e=>{e.preventDefault(); dist=Math.max(200,Math.min(3000,dist + e.deltaY));},{passive:false});
-
-    function project(v){
-      const cosy=Math.cos(yaw), siny=Math.sin(yaw), cosx=Math.cos(pitch), sinx=Math.sin(pitch);
-      let x=v.x*cosy - v.z*siny, z=v.x*siny + v.z*cosy, y=v.y*cosx - z*sinx; z = v.y*sinx + z*cosx;
-      const f=dist, s=f/(f+z+1e-3);
-      return {x:x*s + cv.width/(dpr*2) + tx, y:y*s + cv.height/(dpr*2) + ty, s};
-    }
-
+    el2D.addEventListener('wheel',e=>{e.preventDefault(); dist=Math.max(200,Math.min(3000,dist+e.deltaY));},{passive:false});
+    function project(v){const cosy=Math.cos(yaw),siny=Math.sin(yaw),cosx=Math.cos(pitch),sinx=Math.sin(pitch); let x=v.x*cosy - v.z*siny, z=v.x*siny + v.z*cosy, y=v.y*cosx - z*sinx; z=v.y*sinx + z*cosx; const f=dist,s=f/(f+z+1e-3); return {x:x*s + cv.width/(dpr*2) + tx, y:y*s + cv.height/(dpr*2) + ty, s};}
+    function updateCounters(){const idx=BLOOM.showAll?model.nodes.length:upperBound(model.births,BLOOM.t); const coins=idx; const gifts=idx?model.giftPrefix[idx-1]:0; coinsEl.textContent=coins.toLocaleString('en-US'); raisedEl.textContent=fmt$(Math.round(coins*50+gifts)); fillEl.style.width=`${Math.min(100,(BLOOM.t/BLOOM.duration)*100)}%`;}
     function draw(){
-      if(BLOOM.playing){
-        BLOOM.t=Math.min(BLOOM.duration, performance.now()-BLOOM.start);
-        if(BLOOM.t>=BLOOM.duration){ BLOOM.playing=false; }
-      }
+      if(BLOOM.playing){ BLOOM.t=Math.min(BLOOM.duration, performance.now()-BLOOM.start); }
       updateCounters();
-
       ctx.clearRect(0,0,cv.width,cv.height);
-      const screenPos=new Array(model.nodes.length);
-
-      // edges faint
-      ctx.strokeStyle='rgba(91,107,149,0.30)'; ctx.lineWidth=1; ctx.beginPath();
+      ctx.strokeStyle='rgba(91,107,149,0.35)'; ctx.beginPath();
       for(const l of model.links){ const a=project(model.nodes[l.source]), b=project(model.nodes[l.target]); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
       ctx.stroke();
-
-      // born edges cyan
-      ctx.strokeStyle='rgba(110,231,255,1.0)'; ctx.beginPath();
-      for(const l of model.links){ if(!BLOOM.showAll && model.nodes[l.target].birth>BLOOM.t) continue; const a=project(model.nodes[l.source]), b=project(model.nodes[l.target]); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
-      ctx.stroke();
-
-      // nodes
       for(const n of model.nodes){
-        if(!BLOOM.showAll && BLOOM.t < n.birth) continue;
-        const p=project(n);
-        const base = n.type==='dark'?7.0 : n.type==='light'?6.5 : n.type==='green'?6.8 : 6.2;
-        const r = base * (0.6 + 0.6*p.s);
-        ctx.fillStyle = BLOOM.yellow ? '#ffff00' :
-          (n.type==='dark')?'#1e3a8a' : (n.type==='light')?'#93c5fd' : (n.type==='green')?'#22c55e' : '#ef4444';
+        if(!BLOOM.showAll && BLOOM.t<n.birth) continue;
+        const p=project(n); const r=(n.type==='dark'?10: n.type==='light'?9.5: n.type==='green'?9.8: 9.2)*(0.6+0.6*p.s);
+        ctx.fillStyle = BLOOM.yellow ? '#ffff00' : (n.type==='dark')?'#1e3a8a' : (n.type==='light')?'#93c5fd' : (n.type==='green')?'#22c55e' : '#ef4444';
         ctx.beginPath(); ctx.arc(p.x,p.y,Math.max(2,r),0,Math.PI*2); ctx.fill();
       }
-
       requestAnimationFrame(draw);
     }
     requestAnimationFrame(draw);
-    setStatus('Canvas 2D running');
+    setStatus('Canvas 2D running (failsafe ON).');
   }
 })();
