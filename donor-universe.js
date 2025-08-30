@@ -52,8 +52,9 @@
 
   // 2) Draw a giant WebGL TRIANGLE so you can’t miss it
   try {
-    runWebGLTriangle(gl);
-    setStatus('WebGL triangle OK — click "Enable Galaxy" to switch to the 3D donor map.');
+runWebGLTriangle(gl);
+setStatus('WebGL triangle OK — loading galaxy…');
+setTimeout(() => { runWebGLGalaxy(gl); }, 300); // auto-start after 0.3s
   } catch (e) {
     setStatus('WebGL TRIANGLE ERROR: ' + (e && e.message ? e.message : e));
     console.error(e);
@@ -361,3 +362,4 @@
   function link(gl,vsSrc,fsSrc){ const p=gl.createProgram(); gl.attachShader(p,sh(gl,gl.VERTEX_SHADER,vsSrc)); gl.attachShader(p,sh(gl,gl.FRAGMENT_SHADER,fsSrc)); gl.linkProgram(p); if(!gl.getProgramParameter(p,gl.LINK_STATUS)){ throw new Error(gl.getProgramInfoLog(p)); } return p; }
   function resizeGL(){ const dpr=window.devicePixelRatio||1; const w=glCanvas.clientWidth,h=glCanvas.clientHeight; glCanvas.width=Math.max(1,w*dpr); glCanvas.height=Math.max(1,h*dpr); if (gl) gl.viewport(0,0,glCanvas.width,glCanvas.height); }
 })();
+
