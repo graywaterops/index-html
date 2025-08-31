@@ -1,5 +1,6 @@
-/* donor-universe.js — Three.js UMD load (no ESM), probabilistic donor growth, click stats,
-   wires #btnPlay / #btnAll / #btnDebug, Play/Pause freezes spin+counting, HTML data-* knobs.
+/* donor-universe.js — Three.js UMD (no ESM), probabilistic donor growth, click stats,
+   wires #btnPlay / #btnAll / #btnDebug, Play/Pause freezes spin+counting,
+   density knobs via <canvas id="gl" data-*>
 */
 
 (() => {
@@ -23,13 +24,13 @@
   if (!canvas) { console.error('[DU] Missing <canvas id="gl">'); return; }
   canvas.style.pointerEvents='auto'; canvas.style.touchAction='none'; canvas.style.cursor='grab';
 
-  // ---- knobs from HTML (all optional) ----
+  // ---- knobs from HTML (optional) ----
   const cfg = {
-    seeds       : +canvas.dataset.seeds        || 250,
-    pPrimary    : +canvas.dataset.pPrimary     || 0.85,
-    lambdaExtras: +canvas.dataset.lambdaExtras || 0.8,
-    lambdaReds  : +canvas.dataset.lambdaReds   || 0.9,
-    redDepth    : +canvas.dataset.redDepth     || 3
+    seeds       : +canvas.dataset.seeds        || 250,   // roots
+    pPrimary    : +canvas.dataset.pPrimary     || 0.85,  // prob of +1 child
+    lambdaExtras: +canvas.dataset.lambdaExtras || 0.8,   // Poisson λ for greens/root
+    lambdaReds  : +canvas.dataset.lambdaReds   || 0.9,   // Poisson λ for reds/green
+    redDepth    : +canvas.dataset.redDepth     || 3      // max red generations
   };
 
   // ---- RNG & helpers ----
@@ -46,15 +47,12 @@
     return Math.round(2000 + rand()*3000);              // 2000–5000
   }
 
-  // ---- Three UMD loader (0.149.0 for stable globals) ----
+  // ---- Three UMD loader (stable global) ----
   function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
   async function loadThreeUMD(){
     if (window.THREE) return window.THREE;
-    // Load a pre-r160 global build (examples/js depends on it)
-    await loadScript('https://unpkg.com/three@0.149.0/build/three.min.js');
-    try {
-      await loadScript('https://unpkg.com/three@0.149.0/examples/js/controls/OrbitControls.js');
-    } catch { /* OrbitControls optional */ }
+    await loadScript('https://unpkg.com/three@0.149.0/build/three.min.js');                 // global THREE
+    try { await loadScript('https://unpkg.com/three@0.149.0/examples/js/controls/OrbitControls.js'); } catch {}
     if (!window.THREE) throw new Error('Three failed to load');
     return window.THREE;
   }
@@ -96,7 +94,7 @@
 
       const THREE = await loadThreeUMD();
 
-      // renderer
+      // renderer / scene
       const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false, canvas });
       renderer.setPixelRatio(Math.min(2, window.devicePixelRatio||1));
       renderer.setClearColor(0x000000,1);
@@ -107,11 +105,11 @@
       scene.add(new THREE.AmbientLight(0xffffff,0.9));
       const dir=new THREE.DirectionalLight(0xffffff,0.6); dir.position.set(300,500,400); scene.add(dir);
 
-      // controls (OrbitControls if available)
+      // controls
       let controls;
       if (THREE.OrbitControls) {
         controls = new THREE.OrbitControls(camera, canvas);
-        controls.enableDamping = true; controls.dampingFactor=0.06;
+        controls.enableDamping=true; controls.dampingFactor=0.06;
         controls.rotateSpeed=0.9; controls.zoomSpeed=0.8; controls.panSpeed=0.8;
         controls.autoRotate=true; controls.autoRotateSpeed=0.6;
       } else {
@@ -148,12 +146,10 @@
 
       function growPrimaryAndExtras(parentId){
         const p = nodes[parentId];
-        // primary (+1) with probability pPrimary
-        if (rnd() < cfg.pPrimary) {
+        if (rnd() < cfg.pPrimary) { // primary +1
           const l = add('light', p.id, sampleGift(rnd));
           l.x=p.x+j(); l.y=p.y+j(); l.z=p.z+j();
         }
-        // extras (greens) ~ Poisson(λExtras)
         const kExtras = poisson(cfg.lambdaExtras, rnd);
         for (let i=0;i<kExtras;i++){
           const g = add('green', p.id, sampleGift(rnd));
@@ -171,10 +167,9 @@
           growReds(r.id, depth+1);
         }
       }
-      // run growth for each root
       for (const r of roots) growPrimaryAndExtras(r.id);
 
-      // spheres
+      // spheres (MATS declared ONCE here)
       const MATS={
         dark : new THREE.MeshStandardMaterial({color:COLOR.dark ,metalness:0.2,roughness:0.45}),
         light: new THREE.MeshStandardMaterial({color:COLOR.light,metalness:0.2,roughness:0.45}),
@@ -213,8 +208,7 @@
       function clearHi(){ if(glow){ scene.remove(glow); glow.geometry.dispose(); glow.material.dispose(); glow=null; }
         for(const m of spheres){ m.material.transparent=false; m.material.opacity=1; }
         edges.material.opacity = edges.visible ? 0.40 : 0.02;
-        setStatus('ready — click a node to explore.');
-      }
+        setStatus('ready — click a node to explore.'); }
       function subtreeStats(startId){
         let count=0, gifts=0, coins=0;
         const keep=new Set([startId]), q=[startId];
@@ -234,7 +228,7 @@
         const gpos=new Float32Array(kept.length*6); let i=0;
         for(const l of kept){ const a=nodes[l.source], b=nodes[l.target]; gpos[i++]=a.x; gpos[i++]=a.y; gpos[i++]=a.z; gpos[i++]=b.x; gpos[i++]=b.y; gpos[i++]=b.z; }
         const ggeo=new THREE.BufferGeometry(); ggeo.setAttribute('position', new THREE.BufferAttribute(gpos,3));
-        glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:HILITE, transparent:true, opacity:0.95}));
+        glow=new THREE.LineSegments(ggeo, new THREE.LineBasicMaterial({color:HILITE,transparent:true,opacity:0.95}));
         scene.add(glow);
         const direct = (nodes[startId].gift||0) + COIN;
         const raised = gifts + coins*COIN;
@@ -253,15 +247,22 @@
       canvas.addEventListener('click', onPick, {passive:true});
       canvas.addEventListener('touchend', onPick, {passive:true});
 
-      // Buttons (wire existing page buttons)
+      // Buttons
       let playing=true, showEdges=true, yellow=false;
       function setYellow(on){
         yellow = !!on;
-        const mats=[MATS.dark,MATS.light,MATS.green,MATS.red];
-        if(on){ for(const m of mats) m.color.setHex(0xffff00); }
-        else { MATS.dark.color.setHex(COLOR.dark); MATS.light.color.setHex(COLOR.light); MATS.green.color.setHex(COLOR.green); MATS.red.color.setHex(COLOR.red); }
+        if(on){
+          MATS.dark.color.setHex(0xffff00);
+          MATS.light.color.setHex(0xffff00);
+          MATS.green.color.setHex(0xffff00);
+          MATS.red.color.setHex(0xffff00);
+        }else{
+          MATS.dark.color.setHex(COLOR.dark);
+          MATS.light.color.setHex(COLOR.light);
+          MATS.green.color.setHex(COLOR.green);
+          MATS.red.color.setHex(COLOR.red);
+        }
       }
-      const MATS={ dark:MATS?MATS.dark:scene }; // (placeholder to satisfy lints; actual MATS defined above)
 
       if (btnPlay) {
         btnPlay.onclick = ()=>{
@@ -290,7 +291,7 @@
       const totalCoins=nodes.length, totalRaised=totalCoins*COIN;
       let shown=0; (function step(){
         if (playing && shown < totalCoins) {
-          shown = Math.min(totalCoins, shown + Math.ceil(Math.max(1, totalCoins/180))); // ~3s
+          shown = Math.min(totalCoins, shown + Math.ceil(Math.max(1, totalCoins/180))); // ~3s fill
           if(coinsEl)  coinsEl.textContent = shown.toLocaleString('en-US');
           if(raisedEl) raisedEl.textContent = fmt$(shown * COIN);
           if(fillEl)   fillEl.style.width   = (shown/totalCoins*100).toFixed(1)+'%';
@@ -311,6 +312,16 @@
         requestAnimationFrame(loop);
       }
       resize(); loop();
+
+      // expose for quick debugging
+      const MATS={ dark:scene.children.find(o=>o.material?.color?.getHex?.()===COLOR.dark)?.material || new THREE.MeshStandardMaterial({color:COLOR.dark}),
+                   light:scene.children.find(o=>o.material?.color?.getHex?.()===COLOR.light)?.material || new THREE.MeshStandardMaterial({color:COLOR.light}),
+                   green:scene.children.find(o=>o.material?.color?.getHex?.()===COLOR.green)?.material || new THREE.MeshStandardMaterial({color:COLOR.green}),
+                   red:scene.children.find(o=>o.material?.color?.getHex?.()===COLOR.red)?.material || new THREE.MeshStandardMaterial({color:COLOR.red}) };
+      // overwrite with the actual ones we created above:
+      MATS.dark  = scene.children.find(m=>m.material===MATS.dark )?.material || MATS.dark;
+      // (No redeclaration — just kept for dev console access)
+      window.__DU__ = { scene, camera, controls, nodes, links, MATS };
 
     } catch (e) {
       console.error(e);
