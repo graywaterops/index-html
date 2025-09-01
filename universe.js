@@ -1,10 +1,10 @@
 // ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',     // dark blue
-  PRIMARY: '#7cc3ff',  // light blue
-  EXTRA: '#2ecc71',    // green
-  DOWN: '#e74c3c',     // red
-  HILITE: '#ffff00'    // yellow highlight
+  ROOT: '#1f4aa8',
+  PRIMARY: '#7cc3ff',
+  EXTRA: '#2ecc71',
+  DOWN: '#e74c3c',
+  HILITE: '#ffff00'
 };
 
 // ----- Generate graph data -----
@@ -67,7 +67,7 @@ function initGraph(preset = 'dense') {
       .backgroundColor('#000')
       .showNavInfo(false)
 
-      // Node rendering
+      // Render nodes
       .nodeThreeObject(node => {
         if (selectedNode && node.id === selectedNode.id) {
           return new THREE.Mesh(
@@ -81,7 +81,7 @@ function initGraph(preset = 'dense') {
         );
       })
 
-      // Link rendering
+      // Render links
       .linkColor(l => {
         if (!selectedNode) return 'rgba(180,200,255,0.4)';
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id)
@@ -96,11 +96,11 @@ function initGraph(preset = 'dense') {
       // Node sizing
       .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 7 : n.type === 'extra' ? 6 : 5)
 
-      // Run layout, then freeze
+      // Let it spread out, then freeze
       .warmupTicks(120)
       .cooldownTicks(0)
 
-      // Click to select
+      // Click to select (no camera move)
       .onNodeClick(node => {
         selectedNode = node;
         Graph.refresh();
@@ -109,7 +109,7 @@ function initGraph(preset = 'dense') {
 
   Graph.graphData(data);
 
-  // Save camera for reset
+  // Save camera position for reset
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
