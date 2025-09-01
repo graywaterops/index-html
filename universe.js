@@ -1,10 +1,10 @@
 // ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',
-  PRIMARY: '#7cc3ff',
-  EXTRA: '#2ecc71',
-  DOWN: '#e74c3c',
-  HILITE: '#ffff00'
+  ROOT: '#1f4aa8',     // dark blue
+  PRIMARY: '#7cc3ff',  // light blue
+  EXTRA: '#2ecc71',    // green
+  DOWN: '#e74c3c',     // red
+  HILITE: '#ffff00'    // yellow highlight
 };
 
 // ----- Generate graph data -----
@@ -71,7 +71,7 @@ function initGraph(preset = 'dense') {
       .nodeThreeObject(node => {
         if (selectedNode && node.id === selectedNode.id) {
           return new THREE.Mesh(
-            new THREE.SphereGeometry(10),
+            new THREE.SphereGeometry(8),
             new THREE.MeshBasicMaterial({ color: COLOR.HILITE, wireframe: true })
           );
         }
@@ -94,16 +94,16 @@ function initGraph(preset = 'dense') {
       })
 
       // Node sizing
-      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 6 : n.type === 'extra' ? 5 : 4)
+      .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 7 : n.type === 'extra' ? 6 : 5)
 
       // Run layout, then freeze
-      .warmupTicks(100)
+      .warmupTicks(120)
       .cooldownTicks(0)
 
-      // Click handler
+      // Click to select
       .onNodeClick(node => {
         selectedNode = node;
-        Graph.refresh(); // re-render with highlight
+        Graph.refresh();
       });
   }
 
