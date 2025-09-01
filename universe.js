@@ -1,20 +1,20 @@
 // ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',
-  PRIMARY: '#7cc3ff',
-  EXTRA: '#2ecc71',
-  DOWN: '#e74c3c',
-  HILITE: '#ffffff'
+  ROOT: '#1f4aa8',     // dark blue
+  PRIMARY: '#7cc3ff',  // light blue
+  EXTRA: '#2ecc71',    // green
+  DOWN: '#e74c3c',     // red
+  HILITE: '#ffff00'    // yellow for highlight
 };
 
-// ----- Generate data -----
+// ----- Generate graph data -----
 function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
   const nodes = [];
   const links = [];
   let id = 0;
 
   const addNode = (type, parentId = null) => {
-    const node = { id: id++, type, color: COLOR[type.toUpperCase()] || COLOR.DOWN, label: `${type.toUpperCase()} #${id}` };
+    const node = { id: id++, type, color: COLOR[type.toUpperCase()] || COLOR.DOWN };
     nodes.push(node);
     if (parentId !== null) links.push({ source: parentId, target: node.id });
     return node.id;
@@ -37,83 +37,96 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
     }
   }
   greenStarts.forEach(gid => growRed(gid, depth));
+
   return { nodes, links };
 }
 
-// ----- Build graph -----
+// ----- Globals -----
 const container = document.getElementById('graph');
+const statusEl = document.getElementById('status');
+const helpEl = document.getElementById('help');
+const presetSel = document.getElementById('preset');
+const btnReset = document.getElementById('btnReset');
+const btnHelp = document.getElementById('btnHelp');
+const btnCloseHelp = document.getElementById('btnCloseHelp');
+
 let Graph, lastCam;
-let highlightNodes = new Set();
-let highlightLinks = new Set();
-let adjacency = new Map();
+let selectedNode = null;
 
-function buildAdjacency(data) {
-  adjacency.clear();
-  data.nodes.forEach(n => adjacency.set(n.id, []));
-  data.links.forEach(l => {
-    const src = typeof l.source === 'object' ? l.source.id : l.source;
-    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
-    adjacency.get(src).push(tgt);
-  });
-}
-
-function setHighlight(node) {
-  highlightNodes.clear();
-  highlightLinks.clear();
-  const visit = (id) => {
-    if (highlightNodes.has(id)) return;
-    highlightNodes.add(id);
-    (adjacency.get(id) || []).forEach(child => {
-      highlightLinks.add(`${id}-${child}`);
-      visit(child);
-    });
-  };
-  visit(node.id);
-  Graph.refresh();
-}
-
+// ----- Build graph -----
 function initGraph(preset = 'dense') {
   const presets = {
-    dense:  { roots: 85,  extraMax: 4, depth: 3, redBranch: [2,3,4] },
-    medium: { roots: 60,  extraMax: 3, depth: 3, redBranch: [1,2,3] },
-    sparse: { roots: 40,  extraMax: 2, depth: 2, redBranch: [1,2] }
+    dense:  { roots: 85, extraMax: 4, depth: 3, redBranch: [2,3,4] },
+    medium: { roots: 60, extraMax: 3, depth: 3, redBranch: [1,2,3] },
+    sparse: { roots: 40, extraMax: 2, depth: 2, redBranch: [1,2] }
   };
   const data = genUniverse(presets[preset]);
-  buildAdjacency(data);
 
   if (!Graph) {
     Graph = ForceGraph3D()(container)
       .backgroundColor('#000')
       .showNavInfo(false)
-      .nodeColor(n => highlightNodes.size === 0 ? n.color : (highlightNodes.has(n.id) ? COLOR.HILITE : n.color))
-      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 4 : n.type === 'extra' ? 3.5 : 2.5)
+
+      // Custom node rendering
+      .nodeThreeObject(node => {
+        if (selectedNode && node.id === selectedNode.id) {
+          return new THREE.Mesh(
+            new THREE.SphereGeometry(8),
+            new THREE.MeshBasicMaterial({ color: COLOR.HILITE, wireframe: true })
+          );
+        }
+        return new THREE.Mesh(
+          new THREE.SphereGeometry(6),
+          new THREE.MeshBasicMaterial({ color: node.color })
+        );
+      })
+
+      // Link rendering
       .linkColor(l => {
-        const key = `${l.source.id || l.source}-${l.target.id || l.target}`;
-        return highlightLinks.size === 0 ? 'rgba(180,200,255,0.35)' : (highlightLinks.has(key) ? '#ffffff' : 'rgba(100,100,100,0.1)');
+        if (!selectedNode) return 'rgba(180,200,255,0.35)';
+        return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? COLOR.HILITE : 'rgba(100,100,100,0.1)';
       })
       .linkWidth(l => {
-        const key = `${l.source.id || l.source}-${l.target.id || l.target}`;
-        return highlightLinks.has(key) ? 1.5 : 0.2;
+        if (!selectedNode) return 0.2;
+        return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? 2 : 0.1;
       })
+
+      // Node size
+      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 5 : n.type === 'extra' ? 4 : 3)
+
       .onNodeClick(node => {
-        focusNode(node);
-        setHighlight(node);
+        selectedNode = node; // select node
+        Graph.refresh();     // redraw with highlight
       });
   }
 
   Graph.graphData(data);
+
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
   });
+
+  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to highlight. H=help`;
 }
 
-function focusNode(node) {
-  const distance = 140;
-  const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
-  const newPos = { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio };
-  Graph.cameraPosition(newPos, node, 1000);
-}
+// ----- UI wiring -----
+presetSel.addEventListener('change', e => initGraph(e.target.value));
+btnReset.addEventListener('click', () => {
+  if (!lastCam) return;
+  Graph.cameraPosition({ x: lastCam.x, y: lastCam.y, z: lastCam.z }, lastCam.lookAt, 800);
+  selectedNode = null;
+  Graph.refresh();
+});
+btnHelp.addEventListener('click', () => helpEl.style.display = 'flex');
+btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
+window.addEventListener('keydown', (ev) => {
+  if (ev.key.toLowerCase() === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
+  if (ev.key === 'Escape') { selectedNode = null; Graph.refresh(); }
+});
+
+// Resize
+addEventListener('resize', () => Graph && Graph.width(innerWidth).height(innerHeight));
 
 // Boot
 initGraph('dense');
