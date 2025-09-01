@@ -7,7 +7,7 @@ const COLOR = {
   HILITE: '#ffff00'
 };
 
-// ----- Generate data -----
+// ----- Generate graph data -----
 function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
   const nodes = [];
   const links = [];
@@ -71,7 +71,7 @@ function initGraph(preset = 'dense') {
       .nodeThreeObject(node => {
         if (selectedNode && node.id === selectedNode.id) {
           return new THREE.Mesh(
-            new THREE.SphereGeometry(8),
+            new THREE.SphereGeometry(10),
             new THREE.MeshBasicMaterial({ color: COLOR.HILITE, wireframe: true })
           );
         }
@@ -83,33 +83,33 @@ function initGraph(preset = 'dense') {
 
       // Link rendering
       .linkColor(l => {
-        if (!selectedNode) return 'rgba(180,200,255,0.35)';
+        if (!selectedNode) return 'rgba(180,200,255,0.4)';
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id)
           ? COLOR.HILITE
           : 'rgba(80,80,80,0.1)';
       })
       .linkWidth(l => {
-        if (!selectedNode) return 0.2;
+        if (!selectedNode) return 0.4;
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? 2 : 0.1;
       })
 
-      // Node size
-      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 5 : n.type === 'extra' ? 4 : 3)
+      // Node sizing
+      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 6 : n.type === 'extra' ? 5 : 4)
 
-      // Let it spread out, then freeze
-      .warmupTicks(80)
+      // Run layout, then freeze
+      .warmupTicks(100)
       .cooldownTicks(0)
 
-      // Click to select
+      // Click handler
       .onNodeClick(node => {
         selectedNode = node;
-        Graph.refresh();
+        Graph.refresh(); // re-render with highlight
       });
   }
 
   Graph.graphData(data);
 
-  // Save camera position for reset
+  // Save camera for reset
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
