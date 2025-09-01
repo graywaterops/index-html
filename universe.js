@@ -7,12 +7,11 @@ const COLOR = {
   HILITE: '#ffff00'
 };
 
-// ----- Generate graph data -----
 function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, depth = 2, redBranch = [1,2] } = {}) {
   const nodes = [], links = [];
   let id = 0;
   const addNode = (type, parentId = null) => {
-    const node = { id: id++, type, color: COLOR[type.toUpperCase()] || COLOR.DOWN };
+    const node = { id: id++, type };
     nodes.push(node);
     if (parentId !== null) links.push({ source: parentId, target: node.id });
     return node.id;
@@ -36,7 +35,6 @@ function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, d
   return { nodes, links };
 }
 
-// ----- Globals -----
 const container = document.getElementById('graph');
 const statusEl = document.getElementById('status');
 const helpEl = document.getElementById('help');
@@ -53,7 +51,6 @@ let highlightLinks = new Set();
 
 const getId = v => (typeof v === 'object' ? v.id : v);
 
-// Build adjacency for downstream traversal
 function buildAdjacency(data) {
   adjacency.clear();
   data.nodes.forEach(n => adjacency.set(n.id, []));
@@ -63,7 +60,6 @@ function buildAdjacency(data) {
   });
 }
 
-// Traverse full downstream
 function setHighlight(node) {
   highlightNodes.clear();
   highlightLinks.clear();
@@ -81,7 +77,6 @@ function setHighlight(node) {
   Graph.refresh();
 }
 
-// ----- Build graph -----
 function initGraph(preset = 'dense') {
   const presets = {
     dense:  { roots: 80, extraMax: 3, depth: 3, redBranch: [2,3] },
@@ -95,26 +90,13 @@ function initGraph(preset = 'dense') {
     Graph = ForceGraph3D()(container)
       .backgroundColor('#000')
       .showNavInfo(false)
-
-      .nodeThreeObject(node => {
-        if (selectedNode && node.id === selectedNode.id) {
-          return new THREE.Mesh(
-            new THREE.SphereGeometry(8),
-            new THREE.MeshBasicMaterial({ color: COLOR.HILITE, wireframe: true })
-          );
-        }
-        if (highlightNodes.size && !highlightNodes.has(node.id)) {
-          return new THREE.Mesh(
-            new THREE.SphereGeometry(5),
-            new THREE.MeshBasicMaterial({ color: '#444444' })
-          );
-        }
-        return new THREE.Mesh(
-          new THREE.SphereGeometry(6),
-          new THREE.MeshBasicMaterial({ color: node.color })
-        );
+      // built-in node rendering for normal nodes
+      .nodeColor(n => {
+        if (selectedNode && n.id === selectedNode.id) return COLOR.HILITE;
+        if (highlightNodes.size && !highlightNodes.has(n.id)) return '#444';
+        return COLOR[n.type.toUpperCase()] || COLOR.DOWN;
       })
-
+      .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 7 : n.type === 'extra' ? 6 : 5)
       .linkColor(l => {
         if (!selectedNode) return 'rgba(180,200,255,0.35)';
         const s = getId(l.source), t = getId(l.target);
@@ -125,11 +107,8 @@ function initGraph(preset = 'dense') {
         const s = getId(l.source), t = getId(l.target);
         return highlightLinks.has(`${s}-${t}`) ? 2 : 0.1;
       })
-
-      .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 7 : n.type === 'extra' ? 6 : 5)
       .warmupTicks(200)
       .cooldownTicks(200)
-
       .onNodeClick(node => setHighlight(node));
   }
 
@@ -140,10 +119,9 @@ function initGraph(preset = 'dense') {
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
   });
 
-  statusEl.textContent = `Status: ${data.nodes.length} nodes, ${data.links.length} links — click a node to highlight its entire downline. H=help, Esc=clear`;
+  statusEl.textContent = `Status: ${data.nodes.length} nodes, ${data.links.length} links — click a node to highlight its downline. H=help, Esc=clear`;
 }
 
-// ----- UI wiring -----
 presetSel.addEventListener('change', e => initGraph(e.target.value));
 btnReset.addEventListener('click', () => {
   if (!lastCam) return;
@@ -156,7 +134,6 @@ btnReset.addEventListener('click', () => {
 btnHelp.addEventListener('click', () => helpEl.style.display = 'flex');
 btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
 window.addEventListener('keydown', ev => {
-  if (ev.key.toLowerCase() === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
   if (ev.key === 'Escape') {
     selectedNode = null;
     highlightNodes.clear();
