@@ -1,13 +1,13 @@
 // ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',     // dark blue
-  PRIMARY: '#7cc3ff',  // light blue
-  EXTRA: '#2ecc71',    // green
-  DOWN: '#e74c3c',     // red
-  HILITE: '#ffff00'    // yellow highlight
+  ROOT: '#1f4aa8',
+  PRIMARY: '#7cc3ff',
+  EXTRA: '#2ecc71',
+  DOWN: '#e74c3c',
+  HILITE: '#ffff00'
 };
 
-// ----- Generate graph data -----
+// ----- Generate data -----
 function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
   const nodes = [];
   const links = [];
@@ -67,7 +67,7 @@ function initGraph(preset = 'dense') {
       .backgroundColor('#000')
       .showNavInfo(false)
 
-      // Custom node rendering
+      // Node rendering
       .nodeThreeObject(node => {
         if (selectedNode && node.id === selectedNode.id) {
           return new THREE.Mesh(
@@ -81,36 +81,41 @@ function initGraph(preset = 'dense') {
         );
       })
 
-      // Highlight links
+      // Link rendering
       .linkColor(l => {
         if (!selectedNode) return 'rgba(180,200,255,0.35)';
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id)
           ? COLOR.HILITE
-          : 'rgba(100,100,100,0.1)';
+          : 'rgba(80,80,80,0.1)';
       })
       .linkWidth(l => {
         if (!selectedNode) return 0.2;
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? 2 : 0.1;
       })
 
-      // Node sizing
+      // Node size
       .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 5 : n.type === 'extra' ? 4 : 3)
+
+      // Let it spread out, then freeze
+      .warmupTicks(80)
+      .cooldownTicks(0)
 
       // Click to select
       .onNodeClick(node => {
         selectedNode = node;
-        Graph.refresh(); // re-render with highlight
+        Graph.refresh();
       });
   }
 
   Graph.graphData(data);
 
+  // Save camera position for reset
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
   });
 
-  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to highlight. H=help, Esc=clear`;
+  statusEl.textContent = `Status: ${data.nodes.length} nodes, ${data.links.length} links — click a node to highlight. H=help, Esc=clear`;
 }
 
 // ----- UI wiring -----
@@ -123,7 +128,7 @@ btnReset.addEventListener('click', () => {
 });
 btnHelp.addEventListener('click', () => helpEl.style.display = 'flex');
 btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
-window.addEventListener('keydown', (ev) => {
+window.addEventListener('keydown', ev => {
   if (ev.key.toLowerCase() === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
   if (ev.key === 'Escape') { selectedNode = null; Graph.refresh(); }
 });
