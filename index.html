@@ -1,28 +1,79 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <!-- … your existing <style> with #gl on top and #cv2d hidden … -->
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Smart Coin® — 3D Universe Map</title>
+
+  <!-- 3D Force Graph (handles THREE + controls internally) -->
+  <script src="https://unpkg.com/3d-force-graph@1.73.1/dist/3d-force-graph.min.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; background:#000; color:#e6eef9; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    #graph { position: fixed; inset: 0; }
+    .hud {
+      position: fixed; z-index: 10; pointer-events: none; user-select: none;
+      font-size: 14px; line-height: 1.35;
+    }
+    .legend {
+      top: 12px; left: 12px; background: rgba(12,18,28,.66); padding: 10px 12px; border-radius: 10px; pointer-events: auto;
+      box-shadow: 0 0 0 1px rgba(255,255,255,.06) inset;
+    }
+    .legend .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; transform: translateY(1px); }
+    .status { left: 12px; bottom: 12px; background: rgba(12,18,28,.66); padding: 8px 10px; border-radius: 8px; }
+    .toolbar { top: 12px; right: 12px; display:flex; gap:8px; }
+    .btn, select {
+      pointer-events:auto; background: rgba(12,18,28,.66); color:#dbe7ff; border:1px solid rgba(255,255,255,.12);
+      border-radius: 10px; padding:8px 10px; font-weight:600; letter-spacing:.2px;
+    }
+    .help {
+      position: fixed; inset: 0; display:none; align-items:center; justify-content:center; background: rgba(0,0,0,.72);
+      z-index: 15; pointer-events:auto;
+    }
+    .help > div { max-width: 820px; background:#0b1320; padding:18px 20px; border-radius:16px; border:1px solid rgba(255,255,255,.12); }
+    .help h3 { margin: 0 0 10px; }
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#141c2c; padding:2px 6px; border-radius:6px; border:1px solid rgba(255,255,255,.1); }
+  </style>
 </head>
 <body>
-  <div class="universe-wrap">
-    <canvas id="gl"
-            data-seeds="80"
-            data-p-primary="0.85"
-            data-lambda-extras="0.8"
-            data-lambda-reds="0.9"
-            data-red-depth="3"></canvas>
-    <canvas id="cv2d"></canvas>
+  <div id="graph"></div>
+
+  <!-- Legend -->
+  <div class="hud legend">
+    <div><span class="dot" style="background:#1f4aa8"></span> <strong>Dark blue:</strong> roots</div>
+    <div><span class="dot" style="background:#7cc3ff"></span> <strong>Light blue:</strong> primary +1 (max 1 per parent)</div>
+    <div><span class="dot" style="background:#2ecc71"></span> <strong>Green:</strong> extra donations from same parent</div>
+    <div><span class="dot" style="background:#e74c3c"></span> <strong>Red:</strong> downstream of any green</div>
   </div>
 
-  <div class="pill">Coins: <b id="coins">0</b> &nbsp; Raised: <b id="raised">$0</b></div>
-  <div class="toolbar">
-    <button id="btnPlay"  class="btn">⏸ Play/Pause</button>
-    <button id="btnAll"   class="btn">Show All</button>
-    <button id="btnDebug" class="btn">Yellow Dots</button>
+  <!-- Toolbar -->
+  <div class="hud toolbar">
+    <select id="preset" class="">
+      <option value="dense">Presets ▾  Dense</option>
+      <option value="medium">Presets ▾  Medium</option>
+      <option value="sparse">Presets ▾  Sparse</option>
+    </select>
+    <button id="btnReset" class="btn">Reset view</button>
+    <button id="btnHelp" class="btn">?</button>
   </div>
-  <div id="timeline"><div id="fill"></div></div>
-  <div id="status">Status: initializing…</div>
 
-  <script src="https://graywaterops.github.io/index-html/donor-universe.js?v=19" defer></script>
+  <!-- Status -->
+  <div id="status" class="hud status">Status: ready — click a node to explore. <span class="kbd">H</span>=help</div>
+
+  <!-- Help overlay -->
+  <div id="help" class="help" role="dialog" aria-modal="true">
+    <div>
+      <h3>3D Universe Map — Help</h3>
+      <ul>
+        <li>Click a node to focus and zoom.</li>
+        <li>Drag to rotate. Scroll to zoom. Right-drag to pan.</li>
+        <li>Use the “Presets” menu to change density.</li>
+      </ul>
+      <p><button id="btnCloseHelp" class="btn">Close</button></p>
+    </div>
+  </div>
+
+  <!-- Your app code -->
+  <script src="./universe.js"></script>
 </body>
 </html>
