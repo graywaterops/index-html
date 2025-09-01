@@ -9,17 +9,14 @@ const COLOR = {
 
 // ----- Generate graph data -----
 function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, depth = 2, redBranch = [1,2] } = {}) {
-  const nodes = [];
-  const links = [];
+  const nodes = [], links = [];
   let id = 0;
-
   const addNode = (type, parentId = null) => {
     const node = { id: id++, type, color: COLOR[type.toUpperCase()] || COLOR.DOWN };
     nodes.push(node);
     if (parentId !== null) links.push({ source: parentId, target: node.id });
     return node.id;
   };
-
   const greenStarts = [];
   for (let r = 0; r < roots; r++) {
     const rootId = addNode('root');
@@ -27,7 +24,6 @@ function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, d
     const extras = extraMin + Math.floor(Math.random() * (extraMax - extraMin + 1));
     for (let e = 0; e < extras; e++) greenStarts.push(addNode('extra', rootId));
   }
-
   function growRed(parentId, lvl) {
     if (lvl <= 0) return;
     const children = redBranch[Math.floor(Math.random() * redBranch.length)];
@@ -37,7 +33,6 @@ function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, d
     }
   }
   greenStarts.forEach(gid => growRed(gid, depth));
-
   return { nodes, links };
 }
 
@@ -56,13 +51,14 @@ let adjacency = new Map();
 let highlightNodes = new Set();
 let highlightLinks = new Set();
 
+const getId = v => (typeof v === 'object' ? v.id : v);
+
 // Build adjacency for downstream traversal
 function buildAdjacency(data) {
   adjacency.clear();
   data.nodes.forEach(n => adjacency.set(n.id, []));
   data.links.forEach(l => {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
+    const s = getId(l.source), t = getId(l.target);
     adjacency.get(s).push(t);
   });
 }
@@ -72,8 +68,7 @@ function setHighlight(node) {
   highlightNodes.clear();
   highlightLinks.clear();
   if (!node) return;
-
-  const visit = (id) => {
+  const visit = id => {
     if (highlightNodes.has(id)) return;
     highlightNodes.add(id);
     (adjacency.get(id) || []).forEach(child => {
@@ -81,7 +76,6 @@ function setHighlight(node) {
       visit(child);
     });
   };
-
   visit(node.id);
   selectedNode = node;
   Graph.refresh();
@@ -102,12 +96,17 @@ function initGraph(preset = 'dense') {
       .backgroundColor('#000')
       .showNavInfo(false)
 
-      // Node rendering
       .nodeThreeObject(node => {
         if (selectedNode && node.id === selectedNode.id) {
           return new THREE.Mesh(
             new THREE.SphereGeometry(8),
             new THREE.MeshBasicMaterial({ color: COLOR.HILITE, wireframe: true })
+          );
+        }
+        if (highlightNodes.size && !highlightNodes.has(node.id)) {
+          return new THREE.Mesh(
+            new THREE.SphereGeometry(5),
+            new THREE.MeshBasicMaterial({ color: '#444444' })
           );
         }
         return new THREE.Mesh(
@@ -116,34 +115,26 @@ function initGraph(preset = 'dense') {
         );
       })
 
-      // Link rendering
       .linkColor(l => {
         if (!selectedNode) return 'rgba(180,200,255,0.35)';
-        const s = l.source.id || l.source;
-        const t = l.target.id || l.target;
+        const s = getId(l.source), t = getId(l.target);
         return highlightLinks.has(`${s}-${t}`) ? COLOR.HILITE : 'rgba(80,80,80,0.1)';
       })
       .linkWidth(l => {
         if (!selectedNode) return 0.3;
-        const s = l.source.id || l.source;
-        const t = l.target.id || l.target;
+        const s = getId(l.source), t = getId(l.target);
         return highlightLinks.has(`${s}-${t}`) ? 2 : 0.1;
       })
 
-      // Node sizing
       .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 7 : n.type === 'extra' ? 6 : 5)
+      .warmupTicks(200)
+      .cooldownTicks(200)
 
-      // Run layout, then freeze
-      .warmupTicks(100)
-      .cooldownTicks(0)
-
-      // Click handler
       .onNodeClick(node => setHighlight(node));
   }
 
   Graph.graphData(data);
 
-  // Save camera for reset
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
@@ -174,8 +165,5 @@ window.addEventListener('keydown', ev => {
   }
 });
 
-// Resize
 addEventListener('resize', () => Graph && Graph.width(innerWidth).height(innerHeight));
-
-// Boot
 initGraph('dense');
