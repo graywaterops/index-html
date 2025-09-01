@@ -1,15 +1,22 @@
-// ----- Colors (match legend) -----
+// ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',       // dark blue
-  PRIMARY: '#7cc3ff',    // light blue
-  EXTRA: '#2ecc71',      // green
-  DOWN: '#e74c3c'        // red (downstream of any green)
+  ROOT: '#1f4aa8',
+  PRIMARY: '#7cc3ff',
+  EXTRA: '#2ecc71',
+  DOWN: '#e74c3c',
+  HILITE: '#ffffff'
 };
 
-// ----- Generate data resembling your screenshot -----
+// Stronger links by default
+const BASE_LINK_OPACITY = 0.55;
+const BASE_LINK_WIDTH   = 1.2;
+
+// Dim others when highlighting
+const DIM_NODE_OPACITY  = 0.25;
+const DIM_LINK_OPACITY  = 0.12;
+
+// ------- Data generator (same as before) -------
 function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
-  // nodes: {id, type, color, label}
-  // links: {source, target}
   const nodes = [];
   const links = [];
   let id = 0;
@@ -30,34 +37,21 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
     return node.id;
   };
 
-  // Build roots with their first generation (primary + green extras)
-  const greenStarts = []; // store ids of "extra" nodes; downstream of these become red
-  const rootsArr = [];
-
+  const greenStarts = [];
   for (let r = 0; r < roots; r++) {
     const rootId = addNode('root');
-    rootsArr.push(rootId);
+    for (let k = 0; k < maxPrimary; k++) addNode('primary', rootId);
 
-    // primary (max 1 per parent)
-    for (let k = 0; k < maxPrimary; k++) {
-      addNode('primary', rootId);
-    }
-
-    // extras from same parent (0..N)
     const extras = extraMin + Math.floor(Math.random() * (extraMax - extraMin + 1));
-    for (let e = 0; e < extras; e++) {
-      const extraId = addNode('extra', rootId);
-      greenStarts.push(extraId);
-    }
+    for (let e = 0; e < extras; e++) greenStarts.push(addNode('extra', rootId));
   }
 
-  // For each green start, grow a small red subtree to simulate the bloom
   function growRed(parentId, lvl) {
     if (lvl <= 0) return;
     const children = redBranch[Math.floor(Math.random() * redBranch.length)];
     for (let i = 0; i < children; i++) {
-      const childId = addNode('down', parentId);
-      growRed(childId, lvl - 1);
+      const id = addNode('down', parentId);
+      growRed(id, lvl - 1);
     }
   }
   greenStarts.forEach(gid => growRed(gid, depth));
@@ -65,82 +59,158 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
   return { nodes, links };
 }
 
-// ----- Build/refresh graph -----
-const container = document.getElementById('graph');
-const statusEl = document.getElementById('status');
-const helpEl = document.getElementById('help');
-const presetSel = document.getElementById('preset');
-const btnReset = document.getElementById('btnReset');
-const btnHelp = document.getElementById('btnHelp');
+// ------- Graph setup -------
+const container    = document.getElementById('graph');
+const statusEl     = document.getElementById('status');
+const helpEl       = document.getElementById('help');
+const presetSel    = document.getElementById('preset');
+const btnReset     = document.getElementById('btnReset');
+const btnHelp      = document.getElementById('btnHelp');
 const btnCloseHelp = document.getElementById('btnCloseHelp');
 
-let Graph; // instance
-let lastCam; // store initial camera pos
+let Graph, lastCam, linkBoost = 1.0;
+
+// highlight state
+let highlightedNode = null;
+const highlightNodes = new Set();
+const highlightLinks = new Set();
+const nodeNeighbors  = new Map();
+
+function buildAdjacency(data) {
+  nodeNeighbors.clear();
+  data.nodes.forEach(n => nodeNeighbors.set(n.id, new Set()));
+  data.links.forEach(l => {
+    const a = typeof l.source === 'object' ? l.source.id : l.source;
+    const b = typeof l.target === 'object' ? l.target.id : l.target;
+    nodeNeighbors.get(a).add(b);
+    nodeNeighbors.get(b).add(a);
+  });
+}
 
 function initGraph(preset = 'dense') {
-  // pick a preset
   const presets = {
     dense:  { roots: 85,  extraMax: 4, depth: 3, redBranch: [2,3,4] },
     medium: { roots: 60,  extraMax: 3, depth: 3, redBranch: [1,2,3] },
     sparse: { roots: 40,  extraMax: 2, depth: 2, redBranch: [1,2] }
   };
   const data = genUniverse(presets[preset]);
+  buildAdjacency(data);
+  clearHighlight();
 
-  // Create/replace instance
   if (!Graph) {
     Graph = ForceGraph3D()(container)
-      .backgroundColor('#000000')
+      .backgroundColor('#000')               // black canvas
       .showNavInfo(false)
-      .nodeColor(n => n.color)
-      .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 4 : n.type === 'extra' ? 3.5 : 2.5)
-      .nodeOpacity(0.95)
-      .linkColor(() => 'rgba(180, 200, 255, 0.35)')
-      .linkOpacity(0.28)
-      .linkWidth(0.2)
+
+      // ✅ BIG, OPAQUE NODES
+      .nodeRelSize(6)                         // make nodes larger
+      .nodeOpacity(() => 1)                   // fully opaque
+      .nodeResolution(24)                     // smoother spheres
+
+      // color + dim logic
+      .nodeColor(n => {
+        if (!highlightedNode) return n.color;
+        return highlightNodes.has(n) ? COLOR.HILITE : n.color;
+      })
+
+      // keep values proportional even when big
+      .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 6 : n.type === 'extra' ? 5 : 4)
+
+      // links: brighter & thicker; super bright when selected
+      .linkColor(l => {
+        if (!highlightedNode) return `rgba(210,230,255,${BASE_LINK_OPACITY * linkBoost})`;
+        return highlightLinks.has(l) ? COLOR.HILITE : `rgba(170,190,240,${DIM_LINK_OPACITY * linkBoost})`;
+      })
+      .linkOpacity(() => BASE_LINK_OPACITY * linkBoost)
+      .linkWidth(l => (highlightedNode && highlightLinks.has(l) ? 2.4 : BASE_LINK_WIDTH) * linkBoost)
+      .linkDirectionalParticles(l => (highlightedNode && highlightLinks.has(l) ? 4 : 0))
+      .linkDirectionalParticleWidth(2.2)
+      .linkDirectionalParticleSpeed(0.006)
+
       .warmupTicks(60)
       .cooldownTicks(120)
-      .onNodeClick(node => focusNode(node));
+
+      .onNodeClick(node => { focusNode(node); setHighlight(node); });
   }
 
   Graph.graphData(data);
 
-  // Capture the initial camera transform for "Reset view"
   queueMicrotask(() => {
     const cam = Graph.camera();
     lastCam = {
-      x: cam.position.x,
-      y: cam.position.y,
-      z: cam.position.z,
+      x: cam.position.x, y: cam.position.y, z: cam.position.z,
       lookAt: Graph.controls().target.clone()
     };
   });
 
-  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to explore. H=help`;
+  statusEl.textContent =
+    `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — ` +
+    `click a node to highlight its connections. H=help, Esc=clear, L=links`;
 }
 
 function focusNode(node) {
   const distance = 140;
   const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
-  const newPos = { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio };
-  Graph.cameraPosition(newPos, node, 1000);
+  Graph.cameraPosition(
+    { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
+    node,
+    900
+  );
 }
 
-// ----- UI wiring -----
+function clearHighlight() {
+  highlightedNode = null;
+  highlightNodes.clear();
+  highlightLinks.clear();
+  Graph && Graph.refresh();
+}
+
+function setHighlight(node) {
+  highlightedNode = node;
+  highlightNodes.clear();
+  highlightLinks.clear();
+  highlightNodes.add(node);
+
+  const nbrIds = nodeNeighbors.get(node.id) || new Set();
+
+  Graph.graphData().nodes.forEach(n => {
+    if (n.id === node.id || nbrIds.has(n.id)) highlightNodes.add(n);
+  });
+
+  Graph.graphData().links.forEach(l => {
+    const a = typeof l.source === 'object' ? l.source.id : l.source;
+    const b = typeof l.target === 'object' ? l.target.id : l.target;
+    if ((a === node.id && nbrIds.has(b)) || (b === node.id && nbrIds.has(a))) {
+      highlightLinks.add(l);
+    }
+  });
+
+  Graph.refresh();
+}
+
+// ----- UI -----
 presetSel.addEventListener('change', e => initGraph(e.target.value));
 btnReset.addEventListener('click', () => {
-  if (!lastCam) return;
-  Graph.cameraPosition({ x: lastCam.x, y: lastCam.y, z: lastCam.z }, lastCam.lookAt, 800);
+  if (lastCam) Graph.cameraPosition({ x: lastCam.x, y: lastCam.y, z: lastCam.z }, lastCam.lookAt, 800);
+  clearHighlight();
 });
 btnHelp.addEventListener('click', () => helpEl.style.display = 'flex');
 btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
+
 window.addEventListener('keydown', (ev) => {
-  if (ev.key.toLowerCase() === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
+  const k = ev.key.toLowerCase();
+  if (k === 'h') {
+    helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
+  } else if (k === 'escape') {
+    clearHighlight();
+  } else if (k === 'l') {
+    linkBoost = (linkBoost === 1.0 ? 1.8 : 1.0);
+    Graph.refresh();
+  }
 });
 
-// Handle resizing
-addEventListener('resize', () => {
-  Graph && Graph.width(innerWidth).height(innerHeight);
-});
+// resize
+addEventListener('resize', () => Graph && Graph.width(innerWidth).height(innerHeight));
 
-// Boot
+// boot
 initGraph('dense');
