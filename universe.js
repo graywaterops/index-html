@@ -7,16 +7,11 @@ const COLOR = {
   HILITE: '#ffffff'
 };
 
-// Stronger links by default
-const BASE_LINK_OPACITY = 0.55;
-const BASE_LINK_WIDTH   = 1.2;
+const BASE_LINK_OPACITY = 0.2;
+const BASE_LINK_WIDTH   = 0.3;
 
-// Dim others when highlighting
-const DIM_NODE_OPACITY  = 0.25;
-const DIM_LINK_OPACITY  = 0.12;
-
-// ------- Data generator (same as before) -------
-function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
+// ----- Data generator -----
+function genUniverse({ roots = 40, maxPrimary = 1, extraMin = 0, extraMax = 2, depth = 2, redBranch = [1,2] } = {}) {
   const nodes = [];
   const links = [];
   let id = 0;
@@ -41,7 +36,6 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
   for (let r = 0; r < roots; r++) {
     const rootId = addNode('root');
     for (let k = 0; k < maxPrimary; k++) addNode('primary', rootId);
-
     const extras = extraMin + Math.floor(Math.random() * (extraMax - extraMin + 1));
     for (let e = 0; e < extras; e++) greenStarts.push(addNode('extra', rootId));
   }
@@ -59,7 +53,7 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
   return { nodes, links };
 }
 
-// ------- Graph setup -------
+// ----- Graph setup -----
 const container    = document.getElementById('graph');
 const statusEl     = document.getElementById('status');
 const helpEl       = document.getElementById('help');
@@ -68,9 +62,7 @@ const btnReset     = document.getElementById('btnReset');
 const btnHelp      = document.getElementById('btnHelp');
 const btnCloseHelp = document.getElementById('btnCloseHelp');
 
-let Graph, lastCam, linkBoost = 1.0;
-
-// highlight state
+let Graph, lastCam;
 let highlightedNode = null;
 const highlightNodes = new Set();
 const highlightLinks = new Set();
@@ -87,11 +79,11 @@ function buildAdjacency(data) {
   });
 }
 
-function initGraph(preset = 'dense') {
+function initGraph(preset = 'medium') {
   const presets = {
-    dense:  { roots: 85,  extraMax: 4, depth: 3, redBranch: [2,3,4] },
-    medium: { roots: 60,  extraMax: 3, depth: 3, redBranch: [1,2,3] },
-    sparse: { roots: 40,  extraMax: 2, depth: 2, redBranch: [1,2] }
+    dense:  { roots: 80, extraMax: 3, depth: 3, redBranch: [2,3] },
+    medium: { roots: 40, extraMax: 2, depth: 2, redBranch: [1,2] },
+    sparse: { roots: 20, extraMax: 1, depth: 1, redBranch: [1] }
   };
   const data = genUniverse(presets[preset]);
   buildAdjacency(data);
@@ -99,30 +91,30 @@ function initGraph(preset = 'dense') {
 
   if (!Graph) {
     Graph = ForceGraph3D()(container)
-      .backgroundColor('#000')               // black canvas
+      .backgroundColor('#000')
       .showNavInfo(false)
 
-      // ✅ BIG, OPAQUE NODES
-      .nodeRelSize(6)                         // make nodes larger
-      .nodeOpacity(() => 1)                   // fully opaque
-      .nodeResolution(24)                     // smoother spheres
-
-      // color + dim logic
-      .nodeColor(n => {
-        if (!highlightedNode) return n.color;
-        return highlightNodes.has(n) ? COLOR.HILITE : n.color;
+      // --- BIG, GLOWING NODES ---
+      .nodeThreeObject(n => {
+        const sprite = new THREE.Mesh(
+          new THREE.SphereGeometry(6), // size of node
+          new THREE.MeshBasicMaterial({ color: n.color })
+        );
+        return sprite;
       })
 
-      // keep values proportional even when big
-      .nodeVal(n => n.type === 'root' ? 10 : n.type === 'primary' ? 6 : n.type === 'extra' ? 5 : 4)
+      // Node opacity (dim non-neighbors when highlighted)
+      .nodeOpacity(n => {
+        if (!highlightedNode) return 1;
+        return highlightNodes.has(n) ? 1 : 0.15;
+      })
 
-      // links: brighter & thicker; super bright when selected
+      // Links
       .linkColor(l => {
-        if (!highlightedNode) return `rgba(210,230,255,${BASE_LINK_OPACITY * linkBoost})`;
-        return highlightLinks.has(l) ? COLOR.HILITE : `rgba(170,190,240,${DIM_LINK_OPACITY * linkBoost})`;
+        if (!highlightedNode) return `rgba(200,220,255,${BASE_LINK_OPACITY})`;
+        return highlightLinks.has(l) ? COLOR.HILITE : `rgba(160,180,230,0.05)`;
       })
-      .linkOpacity(() => BASE_LINK_OPACITY * linkBoost)
-      .linkWidth(l => (highlightedNode && highlightLinks.has(l) ? 2.4 : BASE_LINK_WIDTH) * linkBoost)
+      .linkWidth(l => (highlightedNode && highlightLinks.has(l) ? 2 : BASE_LINK_WIDTH))
       .linkDirectionalParticles(l => (highlightedNode && highlightLinks.has(l) ? 4 : 0))
       .linkDirectionalParticleWidth(2.2)
       .linkDirectionalParticleSpeed(0.006)
@@ -145,11 +137,11 @@ function initGraph(preset = 'dense') {
 
   statusEl.textContent =
     `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — ` +
-    `click a node to highlight its connections. H=help, Esc=clear, L=links`;
+    `click a node to highlight its connections. H=help, Esc=clear`;
 }
 
 function focusNode(node) {
-  const distance = 140;
+  const distance = 120;
   const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
   Graph.cameraPosition(
     { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
@@ -172,7 +164,6 @@ function setHighlight(node) {
   highlightNodes.add(node);
 
   const nbrIds = nodeNeighbors.get(node.id) || new Set();
-
   Graph.graphData().nodes.forEach(n => {
     if (n.id === node.id || nbrIds.has(n.id)) highlightNodes.add(n);
   });
@@ -199,18 +190,12 @@ btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
 
 window.addEventListener('keydown', (ev) => {
   const k = ev.key.toLowerCase();
-  if (k === 'h') {
-    helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
-  } else if (k === 'escape') {
-    clearHighlight();
-  } else if (k === 'l') {
-    linkBoost = (linkBoost === 1.0 ? 1.8 : 1.0);
-    Graph.refresh();
-  }
+  if (k === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
+  else if (k === 'escape') clearHighlight();
 });
 
 // resize
 addEventListener('resize', () => Graph && Graph.width(innerWidth).height(innerHeight));
 
 // boot
-initGraph('dense');
+initGraph('medium');
