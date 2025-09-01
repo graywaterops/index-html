@@ -1,57 +1,33 @@
-// ----- Colors (match legend) -----
+// ----- Colors -----
 const COLOR = {
-  ROOT: '#1f4aa8',       // dark blue
-  PRIMARY: '#7cc3ff',    // light blue
-  EXTRA: '#2ecc71',      // green
-  DOWN: '#e74c3c'        // red (downstream of any green)
+  ROOT: '#1f4aa8',
+  PRIMARY: '#7cc3ff',
+  EXTRA: '#2ecc71',
+  DOWN: '#e74c3c',
+  HILITE: '#ffffff'
 };
 
-// ----- Generate data resembling your screenshot -----
+// ----- Generate data -----
 function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, depth = 3, redBranch = [1,2,3] } = {}) {
-  // nodes: {id, type, color, label}
-  // links: {source, target}
   const nodes = [];
   const links = [];
   let id = 0;
 
   const addNode = (type, parentId = null) => {
-    const node = {
-      id: id++,
-      type,
-      color:
-        type === 'root' ? COLOR.ROOT :
-        type === 'primary' ? COLOR.PRIMARY :
-        type === 'extra' ? COLOR.EXTRA :
-        COLOR.DOWN,
-      label: `${type.toUpperCase()} #${id}`
-    };
+    const node = { id: id++, type, color: COLOR[type.toUpperCase()] || COLOR.DOWN, label: `${type.toUpperCase()} #${id}` };
     nodes.push(node);
     if (parentId !== null) links.push({ source: parentId, target: node.id });
     return node.id;
   };
 
-  // Build roots with their first generation (primary + green extras)
-  const greenStarts = []; // store ids of "extra" nodes; downstream of these become red
-  const rootsArr = [];
-
+  const greenStarts = [];
   for (let r = 0; r < roots; r++) {
     const rootId = addNode('root');
-    rootsArr.push(rootId);
-
-    // primary (max 1 per parent)
-    for (let k = 0; k < maxPrimary; k++) {
-      addNode('primary', rootId);
-    }
-
-    // extras from same parent (0..N)
+    for (let k = 0; k < maxPrimary; k++) addNode('primary', rootId);
     const extras = extraMin + Math.floor(Math.random() * (extraMax - extraMin + 1));
-    for (let e = 0; e < extras; e++) {
-      const extraId = addNode('extra', rootId);
-      greenStarts.push(extraId);
-    }
+    for (let e = 0; e < extras; e++) greenStarts.push(addNode('extra', rootId));
   }
 
-  // For each green start, grow a small red subtree to simulate the bloom
   function growRed(parentId, lvl) {
     if (lvl <= 0) return;
     const children = redBranch[Math.floor(Math.random() * redBranch.length)];
@@ -61,61 +37,75 @@ function genUniverse({ roots = 60, maxPrimary = 1, extraMin = 0, extraMax = 3, d
     }
   }
   greenStarts.forEach(gid => growRed(gid, depth));
-
   return { nodes, links };
 }
 
-// ----- Build/refresh graph -----
+// ----- Build graph -----
 const container = document.getElementById('graph');
-const statusEl = document.getElementById('status');
-const helpEl = document.getElementById('help');
-const presetSel = document.getElementById('preset');
-const btnReset = document.getElementById('btnReset');
-const btnHelp = document.getElementById('btnHelp');
-const btnCloseHelp = document.getElementById('btnCloseHelp');
+let Graph, lastCam;
+let highlightNodes = new Set();
+let highlightLinks = new Set();
+let adjacency = new Map();
 
-let Graph; // instance
-let lastCam; // store initial camera pos
+function buildAdjacency(data) {
+  adjacency.clear();
+  data.nodes.forEach(n => adjacency.set(n.id, []));
+  data.links.forEach(l => {
+    const src = typeof l.source === 'object' ? l.source.id : l.source;
+    const tgt = typeof l.target === 'object' ? l.target.id : l.target;
+    adjacency.get(src).push(tgt);
+  });
+}
+
+function setHighlight(node) {
+  highlightNodes.clear();
+  highlightLinks.clear();
+  const visit = (id) => {
+    if (highlightNodes.has(id)) return;
+    highlightNodes.add(id);
+    (adjacency.get(id) || []).forEach(child => {
+      highlightLinks.add(`${id}-${child}`);
+      visit(child);
+    });
+  };
+  visit(node.id);
+  Graph.refresh();
+}
 
 function initGraph(preset = 'dense') {
-  // pick a preset
   const presets = {
     dense:  { roots: 85,  extraMax: 4, depth: 3, redBranch: [2,3,4] },
     medium: { roots: 60,  extraMax: 3, depth: 3, redBranch: [1,2,3] },
     sparse: { roots: 40,  extraMax: 2, depth: 2, redBranch: [1,2] }
   };
   const data = genUniverse(presets[preset]);
+  buildAdjacency(data);
 
-  // Create/replace instance
   if (!Graph) {
     Graph = ForceGraph3D()(container)
-      .backgroundColor('#000000')
+      .backgroundColor('#000')
       .showNavInfo(false)
-      .nodeColor(n => n.color)
+      .nodeColor(n => highlightNodes.size === 0 ? n.color : (highlightNodes.has(n.id) ? COLOR.HILITE : n.color))
       .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 4 : n.type === 'extra' ? 3.5 : 2.5)
-      .nodeOpacity(0.95)
-      .linkColor(() => 'rgba(180, 200, 255, 0.35)')
-      .linkOpacity(0.28)
-      .linkWidth(0.2)
-      .warmupTicks(60)
-      .cooldownTicks(120)
-      .onNodeClick(node => focusNode(node));
+      .linkColor(l => {
+        const key = `${l.source.id || l.source}-${l.target.id || l.target}`;
+        return highlightLinks.size === 0 ? 'rgba(180,200,255,0.35)' : (highlightLinks.has(key) ? '#ffffff' : 'rgba(100,100,100,0.1)');
+      })
+      .linkWidth(l => {
+        const key = `${l.source.id || l.source}-${l.target.id || l.target}`;
+        return highlightLinks.has(key) ? 1.5 : 0.2;
+      })
+      .onNodeClick(node => {
+        focusNode(node);
+        setHighlight(node);
+      });
   }
 
   Graph.graphData(data);
-
-  // Capture the initial camera transform for "Reset view"
   queueMicrotask(() => {
     const cam = Graph.camera();
-    lastCam = {
-      x: cam.position.x,
-      y: cam.position.y,
-      z: cam.position.z,
-      lookAt: Graph.controls().target.clone()
-    };
+    lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
   });
-
-  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to explore. H=help`;
 }
 
 function focusNode(node) {
@@ -124,23 +114,6 @@ function focusNode(node) {
   const newPos = { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio };
   Graph.cameraPosition(newPos, node, 1000);
 }
-
-// ----- UI wiring -----
-presetSel.addEventListener('change', e => initGraph(e.target.value));
-btnReset.addEventListener('click', () => {
-  if (!lastCam) return;
-  Graph.cameraPosition({ x: lastCam.x, y: lastCam.y, z: lastCam.z }, lastCam.lookAt, 800);
-});
-btnHelp.addEventListener('click', () => helpEl.style.display = 'flex');
-btnCloseHelp.addEventListener('click', () => helpEl.style.display = 'none');
-window.addEventListener('keydown', (ev) => {
-  if (ev.key.toLowerCase() === 'h') helpEl.style.display = (helpEl.style.display === 'flex' ? 'none' : 'flex');
-});
-
-// Handle resizing
-addEventListener('resize', () => {
-  Graph && Graph.width(innerWidth).height(innerHeight);
-});
 
 // Boot
 initGraph('dense');
