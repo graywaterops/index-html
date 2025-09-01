@@ -4,7 +4,7 @@ const COLOR = {
   PRIMARY: '#7cc3ff',  // light blue
   EXTRA: '#2ecc71',    // green
   DOWN: '#e74c3c',     // red
-  HILITE: '#ffff00'    // yellow for highlight
+  HILITE: '#ffff00'    // yellow highlight
 };
 
 // ----- Generate graph data -----
@@ -81,22 +81,25 @@ function initGraph(preset = 'dense') {
         );
       })
 
-      // Link rendering
+      // Highlight links
       .linkColor(l => {
         if (!selectedNode) return 'rgba(180,200,255,0.35)';
-        return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? COLOR.HILITE : 'rgba(100,100,100,0.1)';
+        return (l.source.id === selectedNode.id || l.target.id === selectedNode.id)
+          ? COLOR.HILITE
+          : 'rgba(100,100,100,0.1)';
       })
       .linkWidth(l => {
         if (!selectedNode) return 0.2;
         return (l.source.id === selectedNode.id || l.target.id === selectedNode.id) ? 2 : 0.1;
       })
 
-      // Node size
+      // Node sizing
       .nodeVal(n => n.type === 'root' ? 8 : n.type === 'primary' ? 5 : n.type === 'extra' ? 4 : 3)
 
+      // Click to select
       .onNodeClick(node => {
-        selectedNode = node; // select node
-        Graph.refresh();     // redraw with highlight
+        selectedNode = node;
+        Graph.refresh(); // re-render with highlight
       });
   }
 
@@ -107,7 +110,7 @@ function initGraph(preset = 'dense') {
     lastCam = { x: cam.position.x, y: cam.position.y, z: cam.position.z, lookAt: Graph.controls().target.clone() };
   });
 
-  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to highlight. H=help`;
+  statusEl.textContent = `Status: ${data.nodes.length.toLocaleString()} nodes, ${data.links.length.toLocaleString()} links — click a node to highlight. H=help, Esc=clear`;
 }
 
 // ----- UI wiring -----
