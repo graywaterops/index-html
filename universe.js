@@ -13,7 +13,7 @@
 
   const getId = v => (typeof v === "object" ? v.id : v);
 
-  // ---- CSV parser ----
+  // --- CSV parser ---
   function parseCsvLine(line) {
     const out = []; let cur = "", inQuotes = false;
     for (let i=0;i<line.length;i++) {
@@ -38,7 +38,7 @@
     const text = await res.text();
     const rows = text.split(/\r?\n/).filter(l=>l.trim()).map(parseCsvLine);
 
-    // Referral distribution
+    // referral probabilities
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
     let totalProb=0;
     const referralProbs = referralRows.map(([k,p])=>{
@@ -46,9 +46,9 @@
     });
     if (Math.abs(totalProb-1)>0.01) referralProbs.forEach(r=>r.p/=totalProb);
 
-    // Gift distribution
+    // gift probabilities
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
-    let giftTotal = 0;
+    let giftTotal=0;
     const giftProbs = giftRows.map(([amt,p])=>{
       const amount=parseFloat(String(amt).replace(/[^0-9.]/g,""));
       const prob=parseFloat(p)/100; giftTotal+=prob;
@@ -62,7 +62,7 @@
     return { referralProbs, giftProbs, seeds, generations };
   }
 
-  // ---- Simulation ----
+  // --- Universe sim ---
   function genUniverse({ referralProbs, giftProbs, seeds, generations }) {
     const nodes=[], links=[]; let id=0;
 
@@ -83,10 +83,7 @@
     function sampleGift(giftProbs){
       const total=giftProbs.reduce((s,g)=>s+g.p,0);
       const r=Math.random()*total; let sum=0;
-      for(let {amount,p} of giftProbs){
-        sum+=p;
-        if(r<=sum) return Math.max(amount,50); // enforce $50 minimum
-      }
+      for(let {amount,p} of giftProbs){sum+=p;if(r<=sum)return Math.max(amount,50);}
       return 50;
     }
 
@@ -118,7 +115,7 @@
     forwardLinks.clear(); backLinks.clear();
     if(!node)return;
 
-    // Forward
+    // forward (downline)
     function visitDown(id){
       if(forwardNodes.has(id))return;
       forwardNodes.add(id);
@@ -128,7 +125,7 @@
       });
     }
 
-    // Backtrace
+    // backtrace
     function visitUp(id){
       Graph.graphData().links.forEach(l=>{
         const s=getId(l.source), t=getId(l.target);
@@ -144,7 +141,7 @@
     visitUp(node.id);
   }
 
-  // ---- Draw ----
+  // --- Draw graph ---
   function draw({nodes,links}){
     buildAdjacency(nodes,links);
 
@@ -184,11 +181,9 @@
       .cooldownTicks(150)
       .cooldownTime(8000);
 
-    if(statusEl) {
-      statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow). Esc=clear`;
-    }
+    if(statusEl) statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node for forward (green) and backtrace (yellow). Esc=clear`;
 
-    // Freeze layout after cooldown
+    // stop physics
     setTimeout(()=>{
       Graph.d3Force("charge",null);
       Graph.d3Force("link",null);
@@ -200,7 +195,7 @@
     });
   }
 
-  // ---- Run ----
+  // --- Run ---
   (async()=>{
     if(statusEl) statusEl.textContent="Status: loading sheet data...";
     const {referralProbs,giftProbs,seeds,generations}=await loadInputs();
