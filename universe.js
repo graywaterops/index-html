@@ -6,10 +6,7 @@
   const statusEl = document.getElementById("status");
 
   let Graph;
-  let selectedNode = null;
-  const forwardNodes = new Set(), backNodes = new Set();
-  const forwardLinks = new Set(), backLinks = new Set();
-  const adjacency = new Map();
+  let nodes = [], links = [];
 
   const getId = v => (typeof v === "object" ? v.id : v);
 
@@ -64,13 +61,13 @@
 
   // --- Universe sim ---
   function genUniverse({ referralProbs, giftProbs, seeds, generations }) {
-    const nodes=[], links=[]; let id=0;
+    nodes=[]; links=[]; let id=0;
 
     const addNode=(type,parentId=null)=>{
       const gift=sampleGift(giftProbs);
-      const node={id:id++,type,gift};
+      const node={id:id++,type,gift,highlight:null};
       nodes.push(node);
-      if(parentId!==null) links.push({source:parentId,target:node.id});
+      if(parentId!==null) links.push({source:parentId,target:node.id,highlight:null});
       return node.id;
     };
 
@@ -104,84 +101,73 @@
     return {nodes,links};
   }
 
-  function buildAdjacency(nodes,links){
-    adjacency.clear();
-    nodes.forEach(n=>adjacency.set(n.id,[]));
-    links.forEach(l=>adjacency.get(getId(l.source)).push(getId(l.target)));
+  // --- Highlight logic ---
+  function clearHighlights(){
+    nodes.forEach(n=>n.highlight=null);
+    links.forEach(l=>l.highlight=null);
   }
 
   function highlightPath(node){
-    forwardNodes.clear(); backNodes.clear();
-    forwardLinks.clear(); backLinks.clear();
-    if(!node)return;
+    clearHighlights();
 
-    // forward (downline)
+    // forward
     function visitDown(id){
-      if(forwardNodes.has(id))return;
-      forwardNodes.add(id);
-      (adjacency.get(id)||[]).forEach(child=>{
-        forwardLinks.add(`${id}-${child}`);
-        visitDown(child);
+      const n=nodes.find(nn=>nn.id===id); if(!n) return;
+      n.highlight="forward";
+      links.filter(l=>getId(l.source)===id).forEach(l=>{
+        l.highlight="forward";
+        visitDown(getId(l.target));
       });
     }
 
     // backtrace
     function visitUp(id){
-      Graph.graphData().links.forEach(l=>{
-        const s=getId(l.source), t=getId(l.target);
-        if(t===id && !backNodes.has(s)){
-          backNodes.add(s);
-          backLinks.add(`${s}-${t}`);
-          visitUp(s);
+      links.filter(l=>getId(l.target)===id).forEach(l=>{
+        l.highlight="back";
+        const parent=nodes.find(nn=>nn.id===getId(l.source));
+        if(parent && parent.highlight!=="back"){
+          parent.highlight="back";
+          visitUp(parent.id);
         }
       });
     }
 
+    node.highlight="selected";
     visitDown(node.id);
     visitUp(node.id);
+
+    Graph.graphData({nodes,links}); // force redraw
   }
 
   // --- Draw graph ---
   function draw({nodes,links}){
-    buildAdjacency(nodes,links);
-
     Graph=ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({nodes,links})
       .nodeLabel(n=>`<strong>${n.type}</strong> #${n.id}<br/>Gift: $${n.gift}`)
       .nodeColor(n=>{
-        if(selectedNode){
-          if(forwardNodes.has(n.id)) return "#00ff88";   // forward highlight
-          if(backNodes.has(n.id)) return "#ffdd33";      // backtrace highlight
-          return "#333";
-        }
+        if(n.highlight==="selected") return "#ffffff";
+        if(n.highlight==="forward") return "#00ff88";
+        if(n.highlight==="back") return "#ffdd33";
         return n.type==="root"?"#1f4aa8":
                n.type==="primary"?"#7cc3ff":
                n.type==="extra"?"#2ecc71":"#e74c3c";
       })
       .nodeVal(n=>n.type==="root"?12:n.type==="primary"?8:n.type==="extra"?6:4)
       .linkColor(l=>{
-        const key=`${getId(l.source)}-${getId(l.target)}`;
-        if(forwardLinks.has(key)) return "#00ff88";
-        if(backLinks.has(key)) return "#ffdd33";
+        if(l.highlight==="forward") return "#00ff88";
+        if(l.highlight==="back") return "#ffdd33";
         return "rgba(180,180,180,0.15)";
       })
-      .linkWidth(l=>{
-        const key=`${getId(l.source)}-${getId(l.target)}`;
-        return (forwardLinks.has(key)||backLinks.has(key))?2:0.4;
-      })
-      .onNodeClick(node=>{
-        selectedNode=node;
-        highlightPath(node);
-        Graph.refresh();
-      })
+      .linkWidth(l=>(l.highlight?2:0.4))
+      .onNodeClick(node=>highlightPath(node))
       .d3Force("charge", d3.forceManyBody().strength(-120))
       .d3Force("link", d3.forceLink().distance(40).strength(0.5))
       .d3VelocityDecay(0.6)
       .cooldownTicks(150)
       .cooldownTime(8000);
 
-    if(statusEl) statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node for forward (green) and backtrace (yellow). Esc=clear`;
+    if(statusEl) statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow).`;
 
     // stop physics
     setTimeout(()=>{
@@ -189,17 +175,13 @@
       Graph.d3Force("link",null);
       Graph.d3Force("center",null);
     }, 8500);
-
-    window.addEventListener("keydown",e=>{
-      if(e.key==="Escape"){selectedNode=null;forwardNodes.clear();backNodes.clear();forwardLinks.clear();backLinks.clear();Graph.refresh();}
-    });
   }
 
   // --- Run ---
   (async()=>{
     if(statusEl) statusEl.textContent="Status: loading sheet data...";
-    const {referralProbs,giftProbs,seeds,generations}=await loadInputs();
-    const data=genUniverse({referralProbs,giftProbs,seeds,generations});
+    const inputs=await loadInputs();
+    const data=genUniverse(inputs);
     draw(data);
   })();
 })();
