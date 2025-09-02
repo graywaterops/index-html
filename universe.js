@@ -85,7 +85,7 @@
       const r=Math.random()*total; let sum=0;
       for(let {amount,p} of giftProbs){
         sum+=p;
-        if(r<=sum) return Math.max(amount,50); // clamp to $50 minimum
+        if(r<=sum) return Math.max(amount,50); // enforce $50 minimum
       }
       return 50;
     }
@@ -118,7 +118,7 @@
     forwardLinks.clear(); backLinks.clear();
     if(!node)return;
 
-    // Forward (downstream)
+    // Forward
     function visitDown(id){
       if(forwardNodes.has(id))return;
       forwardNodes.add(id);
@@ -128,7 +128,7 @@
       });
     }
 
-    // Backtrace (upstream)
+    // Backtrace
     function visitUp(id){
       Graph.graphData().links.forEach(l=>{
         const s=getId(l.source), t=getId(l.target);
@@ -142,7 +142,6 @@
 
     visitDown(node.id);
     visitUp(node.id);
-    selectedNode=node;
   }
 
   // ---- Draw ----
@@ -174,23 +173,27 @@
         const key=`${getId(l.source)}-${getId(l.target)}`;
         return (forwardLinks.has(key)||backLinks.has(key))?2:0.5;
       })
-      .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
+      .onNodeClick(node=>{
+        selectedNode=node;
+        highlightPath(node);
+        Graph.refresh();
+      })
       .d3Force("charge", d3.forceManyBody().strength(-120))
       .d3Force("link", d3.forceLink().distance(40).strength(0.5))
       .d3VelocityDecay(0.6)
-      .cooldownTicks(200)
-      .cooldownTime(10000);
+      .cooldownTicks(150)
+      .cooldownTime(8000);
 
     if(statusEl) {
       statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow). Esc=clear`;
     }
 
-    // Freeze physics after cooldown
+    // Freeze after cooldown
     setTimeout(()=>{
       Graph.d3Force("charge",null);
       Graph.d3Force("link",null);
       Graph.d3Force("center",null);
-    }, 11000);
+    }, 8500);
 
     window.addEventListener("keydown",e=>{
       if(e.key==="Escape"){selectedNode=null;forwardNodes.clear();backNodes.clear();forwardLinks.clear();backLinks.clear();Graph.refresh();}
