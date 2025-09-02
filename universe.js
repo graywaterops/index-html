@@ -1,32 +1,26 @@
-// universe.js — robust CSV fetch + auto-detect numeric column
 (() => {
   const CSV_URL =
-    "https://docs.google.com/spreadsheets/d/e/2PACX-1vT0a-Sj6bK2mE4dljf4xHEoD789frMSUsEWINmW-PhuXvm71e6wlq7hjgm892QE-EWqgmTWix-SNmJf/pub?gid=665678863&single=true&output=csv";
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vT0a-Sj6bK2mE4dljf4xHEoD789frMSUsEWINmW-PhuXvm71e6wlq7hjgm892QE-EWqgmTWix-SNmJf/pub?gid=317266263&single=true&output=csv";
 
-  const container = document.getElementById('graph');
-  const statusEl = document.getElementById('status');
-  let Graph = null, selectedNode = null;
-  const hiNodes = new Set(), hiLinks = new Set();
+  const container = document.getElementById("graph");
+  const statusEl = document.getElementById("status");
 
-  const linkKey = (l) => {
-    const s = typeof l.source === 'object' ? l.source.id : l.source;
-    const t = typeof l.target === 'object' ? l.target.id : l.target;
-    return `${s}-${t}`;
-  };
+  let Graph;
 
-  // CSV line parser
+  // ---- Utility: CSV line parser ----
   function parseCsvLine(line) {
-    const out = []; let cur = ''; let inQuotes = false;
+    const out = [];
+    let cur = "", inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQuotes) {
         if (ch === '"') {
           if (line[i + 1] === '"') { cur += '"'; i++; }
-          else { inQuotes = false; }
+          else inQuotes = false;
         } else cur += ch;
       } else {
         if (ch === '"') inQuotes = true;
-        else if (ch === ',') { out.push(cur); cur = ''; }
+        else if (ch === ",") { out.push(cur); cur = ""; }
         else cur += ch;
       }
     }
@@ -34,79 +28,118 @@
     return out;
   }
 
-  async function loadValuesFromCsv() {
-    const res = await fetch(CSV_URL, { cache: 'no-store' });
+  async function loadInputs() {
+    const res = await fetch(CSV_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-
     const lines = text.split(/\r?\n/).filter(l => l.trim());
-    console.log("First few lines:", lines.slice(0, 5));
+    const rows = lines.map(parseCsvLine);
 
-    const parsed = lines.map(parseCsvLine);
-
-    // Auto-detect the first column with mostly numbers
-    const colCount = parsed[0].length;
-    let colIndex = -1;
-    for (let c = 0; c < colCount; c++) {
-      const nums = parsed.map(r => parseFloat(r[c])).filter(v => Number.isFinite(v));
-      if (nums.length > parsed.length / 2) { colIndex = c; break; }
+    // Find the "Referral distribution" block
+    const referralRows = [];
+    for (let r of rows) {
+      if (/^0$|^1$|^2$|^3$|^4$|^5$/.test(r[0])) {
+        referralRows.push([parseInt(r[0]), parseFloat(r[1])]);
+      }
     }
-    if (colIndex < 0) throw new Error("No numeric column found in CSV");
 
-    const values = parsed
-      .map(r => parseFloat(r[colIndex]))
-      .filter(v => Number.isFinite(v));
+    const probs = referralRows.map(([k, p]) => ({ k, p: p / 100 })); // convert % to fraction
 
-    if (!values.length) throw new Error("No numeric values parsed.");
-    return values;
+    // Seed coins
+    const seedRow = rows.find(r => r[0] && r[0].toLowerCase().includes("seed coins"));
+    const seeds = seedRow ? parseInt(seedRow[1]) : 100;
+
+    // Generations
+    const genRow = rows.find(r => r[0] && r[0].toLowerCase().includes("hand-off generations"));
+    const generations = genRow ? parseInt(genRow[1]) : 6;
+
+    return { probs, seeds, generations };
   }
 
-  function draw(values) {
-    const nodes = values.map((val, i) => ({
-      id: i,
-      donors: val,
-      val: Math.max(2, Math.sqrt(val) * 1.8),
-      label: `Generation ${i}\nCumulative donors/seed: ${val.toLocaleString()}`
-    }));
-    const links = values.slice(1).map((_, i) => ({ source: i, target: i + 1 }));
+  // ---- Simulation generator ----
+  function genUniverse({ probs, seeds, generations }) {
+    const nodes = [], links = [];
+    let id = 0;
 
+    const addNode = (type, parentId = null) => {
+      const node = { id: id++, type };
+      nodes.push(node);
+      if (parentId !== null) links.push({ source: parentId, target: node.id });
+      return node.id;
+    };
+
+    // Pick k from distribution
+    function sampleK() {
+      const r = Math.random();
+      let sum = 0;
+      for (let { k, p } of probs) {
+        sum += p;
+        if (r <= sum) return k;
+      }
+      return 0;
+    }
+
+    // Build out seeds
+    const roots = [];
+    for (let i = 0; i < seeds; i++) {
+      roots.push(addNode("root"));
+    }
+
+    // Grow tree
+    function grow(parentId, depth) {
+      if (depth >= generations) return;
+      const k = sampleK();
+      if (k <= 0) return;
+      // first child = primary
+      const first = addNode("primary", parentId);
+      grow(first, depth + 1);
+      // extras
+      for (let i = 1; i < k; i++) {
+        const extra = addNode("extra", parentId);
+        grow(extra, depth + 1);
+      }
+    }
+
+    roots.forEach(r => grow(r, 0));
+
+    return { nodes, links };
+  }
+
+  // ---- Draw with ForceGraph3D ----
+  function draw({ nodes, links }) {
     Graph = ForceGraph3D()(container)
-      .backgroundColor('#000')
+      .backgroundColor("#000")
       .showNavInfo(false)
       .graphData({ nodes, links })
-      .nodeLabel(n => n.label)
-      .nodeVal(n => n.val)
-      .nodeColor(n => (selectedNode && !hiNodes.has(n.id) ? 'rgba(90,110,150,0.35)' : '#7cc3ff'))
-      .linkColor(l => (hiLinks.has(linkKey(l)) ? '#ffff66' : 'rgba(160,160,160,0.35)'))
-      .linkWidth(l => (hiLinks.has(linkKey(l)) ? 3 : 1))
-      .onNodeClick(node => {
-        selectedNode = node;
-        hiNodes.clear(); hiLinks.clear();
-        for (let i = node.id; i < nodes.length - 1; i++) {
-          hiNodes.add(i); hiNodes.add(i + 1);
-          hiLinks.add(`${i}-${i + 1}`);
-        }
-        Graph.refresh();
-      });
-
-    window.addEventListener('keydown', e => {
-      if (e.key === 'Escape') {
-        selectedNode = null; hiNodes.clear(); hiLinks.clear(); Graph.refresh();
-      }
-    });
+      .nodeLabel(n => `${n.type} #${n.id}`)
+      .nodeColor(n =>
+        n.type === "root" ? "#1f4aa8" :
+        n.type === "primary" ? "#7cc3ff" :
+        n.type === "extra" ? "#2ecc71" :
+        "#e74c3c"
+      )
+      .nodeVal(n =>
+        n.type === "root" ? 12 :
+        n.type === "primary" ? 8 :
+        n.type === "extra" ? 6 : 4
+      )
+      .linkColor(() => "rgba(180,180,180,0.5)")
+      .linkWidth(() => 0.8);
 
     setTimeout(() => Graph.zoomToFit(600), 500);
     if (statusEl) statusEl.textContent =
-      `Status: ${nodes.length} generations loaded — click a node to highlight forward. Esc to clear.`;
+      `Status: ${nodes.length} donors, ${links.length} referrals — click/drag to explore.`;
   }
 
+  // ---- Run ----
   (async () => {
     try {
-      const values = await loadValuesFromCsv();
-      draw(values);
+      const { probs, seeds, generations } = await loadInputs();
+      console.log("Parsed inputs:", { probs, seeds, generations });
+      const data = genUniverse({ probs, seeds, generations });
+      draw(data);
     } catch (err) {
       console.error("[3D map] Load error:", err);
-      if (statusEl) statusEl.textContent = `Error: ${err.message}`;
       container.innerHTML = `<div style="color:#fff;padding:16px;font:14px/1.4 system-ui">Error: ${err.message}</div>`;
     }
   })();
