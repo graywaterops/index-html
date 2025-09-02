@@ -6,6 +6,9 @@
   const statusEl = document.getElementById("status");
 
   let Graph;
+  let selectedNode = null;
+  const hiNodes = new Set(), hiLinks = new Set();
+  const adjacency = new Map();
 
   // ---- CSV line parser ----
   function parseCsvLine(line) {
@@ -35,11 +38,11 @@
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     const rows = lines.map(parseCsvLine);
 
-    // Referral distribution (k=0..5 in col A, prob % in col B)
+    // Referral distribution (k=0..5)
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
     const referralProbs = referralRows.map(([k, p]) => ({ k: parseInt(k), p: parseFloat(p)/100 }));
 
-    // Gift distribution (dollar tiers in col A, prob % in col B)
+    // Gift distribution
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
     const giftProbs = giftRows.map(([amt, p]) => ({
       amount: parseFloat(String(amt).replace(/[^0-9.]/g,"")),
@@ -117,8 +120,34 @@
     return { nodes, links };
   }
 
+  function buildAdjacency(nodes, links) {
+    adjacency.clear();
+    nodes.forEach(n => adjacency.set(n.id, []));
+    links.forEach(l => {
+      adjacency.get(l.source).push(l.target);
+    });
+  }
+
+  function highlightPath(node) {
+    hiNodes.clear();
+    hiLinks.clear();
+    if (!node) return;
+    function visit(id) {
+      if (hiNodes.has(id)) return;
+      hiNodes.add(id);
+      (adjacency.get(id) || []).forEach(child => {
+        hiLinks.add(`${id}-${child}`);
+        visit(child);
+      });
+    }
+    visit(node.id);
+    selectedNode = node;
+  }
+
   // ---- Draw ----
   function draw({ nodes, links }) {
+    buildAdjacency(nodes, links);
+
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .showNavInfo(false)
@@ -129,23 +158,41 @@
           Gift: $${n.gift.toLocaleString()}
         </div>`
       )
-      .nodeColor(n =>
-        n.type === "root" ? "#1f4aa8" :
-        n.type === "primary" ? "#7cc3ff" :
-        n.type === "extra" ? "#2ecc71" :
-        "#e74c3c"
-      )
+      .nodeColor(n => {
+        if (selectedNode && !hiNodes.has(n.id)) return "#333";
+        return n.type === "root" ? "#1f4aa8" :
+               n.type === "primary" ? "#7cc3ff" :
+               n.type === "extra" ? "#2ecc71" : "#e74c3c";
+      })
       .nodeVal(n =>
         n.type === "root" ? 12 :
         n.type === "primary" ? 8 :
         n.type === "extra" ? 6 : 4
       )
-      .linkColor(() => "rgba(180,180,180,0.5)")
-      .linkWidth(() => 0.8);
+      .linkColor(l => {
+        const key = `${l.source}-${l.target}`;
+        return hiLinks.has(key) ? "#ffff66" : "rgba(180,180,180,0.2)";
+      })
+      .linkWidth(l => hiLinks.has(`${l.source}-${l.target}`) ? 2 : 0.5)
+      .onNodeClick(node => {
+        highlightPath(node);
+        Graph.refresh();
+      })
+      .d3VelocityDecay(0.1)        // let nodes keep floating
+      .warmupTicks(0)              // never stop physics
+      .cooldownTicks(Infinity);    // infinite motion
 
-    setTimeout(() => Graph.zoomToFit(600), 500);
     if (statusEl) statusEl.textContent =
-      `Status: ${nodes.length} donors, ${links.length} referrals — hover for gifts.`;
+      `Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight children. Esc to clear.`;
+
+    window.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        selectedNode = null;
+        hiNodes.clear();
+        hiLinks.clear();
+        Graph.refresh();
+      }
+    });
   }
 
   // ---- Run ----
