@@ -83,8 +83,11 @@
     function sampleGift(giftProbs){
       const total=giftProbs.reduce((s,g)=>s+g.p,0);
       const r=Math.random()*total; let sum=0;
-      for(let {amount,p} of giftProbs){sum+=p;if(r<=sum)return amount;}
-      return giftProbs[0].amount;
+      for(let {amount,p} of giftProbs){
+        sum+=p;
+        if(r<=sum) return Math.max(amount,50); // clamp to $50 minimum
+      }
+      return 50;
     }
 
     function grow(parentId,depth,parentType="root"){
@@ -152,8 +155,8 @@
       .nodeLabel(n=>`<strong>${n.type}</strong> #${n.id}<br/>Gift: $${n.gift}`)
       .nodeColor(n=>{
         if(selectedNode){
-          if(forwardNodes.has(n.id)) return "#00ff88";   // green highlight for forward
-          if(backNodes.has(n.id)) return "#ffdd33";      // yellow highlight for backtrace
+          if(forwardNodes.has(n.id)) return "#00ff88";   // forward highlight
+          if(backNodes.has(n.id)) return "#ffdd33";      // backtrace highlight
           return "#333";
         }
         return n.type==="root"?"#1f4aa8":
@@ -174,13 +177,20 @@
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
       .d3Force("charge", d3.forceManyBody().strength(-120))
       .d3Force("link", d3.forceLink().distance(40).strength(0.5))
-      .d3VelocityDecay(0.4)
+      .d3VelocityDecay(0.6)
       .cooldownTicks(200)
-      .cooldownTime(15000);
+      .cooldownTime(10000);
 
     if(statusEl) {
       statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow). Esc=clear`;
     }
+
+    // Freeze physics after cooldown
+    setTimeout(()=>{
+      Graph.d3Force("charge",null);
+      Graph.d3Force("link",null);
+      Graph.d3Force("center",null);
+    }, 11000);
 
     window.addEventListener("keydown",e=>{
       if(e.key==="Escape"){selectedNode=null;forwardNodes.clear();backNodes.clear();forwardLinks.clear();backLinks.clear();Graph.refresh();}
