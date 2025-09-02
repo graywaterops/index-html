@@ -7,7 +7,7 @@
 
   let Graph;
 
-  // ---- Utility: CSV line parser ----
+  // ---- CSV line parser ----
   function parseCsvLine(line) {
     const out = [];
     let cur = "", inQuotes = false;
@@ -35,15 +35,16 @@
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     const rows = lines.map(parseCsvLine);
 
-    // Find the referral distribution block
-    const referralRows = [];
-    for (let r of rows) {
-      if (/^0$|^1$|^2$|^3$|^4$|^5$/.test(r[0])) {
-        referralRows.push([parseInt(r[0]), parseFloat(r[1])]);
-      }
-    }
+    // Referral distribution (k=0..5 in col A, prob % in col B)
+    const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
+    const referralProbs = referralRows.map(([k, p]) => ({ k: parseInt(k), p: parseFloat(p)/100 }));
 
-    const probs = referralRows.map(([k, p]) => ({ k, p: p / 100 })); // % to fraction
+    // Gift distribution (dollar tiers in col A, prob % in col B)
+    const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
+    const giftProbs = giftRows.map(([amt, p]) => ({
+      amount: parseFloat(String(amt).replace(/[^0-9.]/g,"")),
+      p: parseFloat(p)/100
+    }));
 
     // Seed coins
     const seedRow = rows.find(r => r[0] && r[0].toLowerCase().includes("seed coins"));
@@ -53,44 +54,53 @@
     const genRow = rows.find(r => r[0] && r[0].toLowerCase().includes("hand-off generations"));
     const generations = genRow ? parseInt(genRow[1]) : 6;
 
-    return { probs, seeds, generations };
+    return { referralProbs, giftProbs, seeds, generations };
   }
 
-  // ---- Simulation generator ----
-  function genUniverse({ probs, seeds, generations }) {
+  // ---- Simulation ----
+  function genUniverse({ referralProbs, giftProbs, seeds, generations }) {
     const nodes = [], links = [];
     let id = 0;
 
     const addNode = (type, parentId = null) => {
-      const node = { id: id++, type };
+      const gift = sampleGift(giftProbs);
+      const node = { id: id++, type, gift };
       nodes.push(node);
       if (parentId !== null) links.push({ source: parentId, target: node.id });
       return node.id;
     };
 
-    // Pick k from distribution
     function sampleK() {
       const r = Math.random();
       let sum = 0;
-      for (let { k, p } of probs) {
+      for (let { k, p } of referralProbs) {
         sum += p;
         if (r <= sum) return k;
       }
       return 0;
     }
 
-    // Recursive growth
+    function sampleGift(giftProbs) {
+      const r = Math.random();
+      let sum = 0;
+      for (let { amount, p } of giftProbs) {
+        sum += p;
+        if (r <= sum) return amount;
+      }
+      return giftProbs[giftProbs.length - 1].amount;
+    }
+
     function grow(parentId, depth, parentType = "root") {
       if (depth >= generations) return;
       const k = sampleK();
       if (k <= 0) return;
 
-      // First referral is "primary" unless parent was extra/down
+      // First referral
       const firstType = (parentType === "extra" || parentType === "down") ? "down" : "primary";
       const first = addNode(firstType, parentId);
       grow(first, depth + 1, firstType);
 
-      // Extras become "extra" only if parent is root/primary; otherwise cascade "down"
+      // Extras
       for (let i = 1; i < k; i++) {
         const type = (parentType === "extra" || parentType === "down") ? "down" : "extra";
         const child = addNode(type, parentId);
@@ -98,23 +108,27 @@
       }
     }
 
-    // Seeds
-    const roots = [];
+    // Roots
     for (let i = 0; i < seeds; i++) {
-      roots.push(addNode("root"));
+      const root = addNode("root");
+      grow(root, 0, "root");
     }
-    roots.forEach(r => grow(r, 0, "root"));
 
     return { nodes, links };
   }
 
-  // ---- Draw with ForceGraph3D ----
+  // ---- Draw ----
   function draw({ nodes, links }) {
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .showNavInfo(false)
       .graphData({ nodes, links })
-      .nodeLabel(n => `${n.type} #${n.id}`)
+      .nodeLabel(n =>
+        `<div>
+          <strong>${n.type.toUpperCase()}</strong> #${n.id}<br/>
+          Gift: $${n.gift.toLocaleString()}
+        </div>`
+      )
       .nodeColor(n =>
         n.type === "root" ? "#1f4aa8" :
         n.type === "primary" ? "#7cc3ff" :
@@ -131,19 +145,20 @@
 
     setTimeout(() => Graph.zoomToFit(600), 500);
     if (statusEl) statusEl.textContent =
-      `Status: ${nodes.length} donors, ${links.length} referrals — click/drag to explore.`;
+      `Status: ${nodes.length} donors, ${links.length} referrals — hover for gifts.`;
   }
 
   // ---- Run ----
   (async () => {
     try {
-      const { probs, seeds, generations } = await loadInputs();
-      console.log("Parsed inputs:", { probs, seeds, generations });
-      const data = genUniverse({ probs, seeds, generations });
+      const { referralProbs, giftProbs, seeds, generations } = await loadInputs();
+      console.log("Parsed inputs:", { referralProbs, giftProbs, seeds, generations });
+      const data = genUniverse({ referralProbs, giftProbs, seeds, generations });
       draw(data);
     } catch (err) {
       console.error("[3D map] Load error:", err);
-      container.innerHTML = `<div style="color:#fff;padding:16px;font:14px/1.4 system-ui">Error: ${err.message}</div>`;
+      container.innerHTML =
+        `<div style="color:#fff;padding:16px;font:14px/1.4 system-ui">Error: ${err.message}</div>`;
     }
   })();
 })();
