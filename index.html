@@ -2,29 +2,32 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <title>Smart Coin® Universe</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Smart Coin® — 3D Donor Universe</title>
-
-  <!-- 3D Force Graph (bundles THREE + controls) -->
-  <script src="https://unpkg.com/3d-force-graph@1.73.1/dist/3d-force-graph.min.js"></script>
-
-  <style>
-    html, body { height: 100%; margin: 0; background:#000; color:#e6eef9; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    #graph { position: fixed; inset: 0; }
-    .hud {
-      position: fixed; z-index: 10; pointer-events: none; user-select: none; font-size: 14px; line-height: 1.35;
-    }
-    .status {
-      left: 12px; bottom: 12px; background: rgba(12,18,28,.66);
-      padding: 8px 10px; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.06) inset;
-    }
-  </style>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- libs -->
+  <script src="https://unpkg.com/three@0.157.0/build/three.min.js"></script>
+  <script src="https://unpkg.com/3d-force-graph@1.73.0/dist/3d-force-graph.min.js"></script>
 </head>
 <body>
-  <div id="graph" aria-label="3D donor map"></div>
-  <div id="status" class="hud status">Status: loading sheet data…</div>
+  <div id="ui">
+    <div id="status">Status: initializing…</div>
+    <div id="legend">
+      <span class="swatch root"></span> Root
+      <span class="swatch primary"></span> Primary
+      <span class="swatch extra"></span> Extra/Down
+      <span class="swatch forward"></span> Forward path
+      <span class="swatch back"></span> Backtrace
+      <span class="swatch selected"></span> Selected
+    </div>
+    <div id="buttons">
+      <button id="clearBtn" title="Clear highlight">Clear</button>
+      <button id="fitBtn" title="Zoom to fit">Fit</button>
+    </div>
+  </div>
 
-  <!-- App code -->
-  <script src="./universe.js"></script>
+  <div id="graph"></div>
+
+  <script src="universe.js"></script>
 </body>
 </html>
