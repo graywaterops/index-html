@@ -1,5 +1,5 @@
 // universe.js — fetches published CSV, builds a gen→gen chain, highlights forward from clicked node.
-
+console.log("First few rows:", lines.slice(0,5));
 (() => {
   // Use your *published to web* CSV URL (works cross-origin).
   const CSV_URL =
@@ -128,3 +128,4 @@
     }
   })();
 })();
+
