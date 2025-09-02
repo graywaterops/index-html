@@ -171,7 +171,7 @@
       })
       .linkWidth(l=>{
         const key=`${getId(l.source)}-${getId(l.target)}`;
-        return (forwardLinks.has(key)||backLinks.has(key))?2:0.5;
+        return (forwardLinks.has(key)||backLinks.has(key))?2:0.4;
       })
       .onNodeClick(node=>{
         selectedNode=node;
@@ -188,7 +188,7 @@
       statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow). Esc=clear`;
     }
 
-    // Freeze after cooldown
+    // Freeze layout after cooldown
     setTimeout(()=>{
       Graph.d3Force("charge",null);
       Graph.d3Force("link",null);
