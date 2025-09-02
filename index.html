@@ -14,11 +14,14 @@
     .hud {
       position: fixed; z-index: 10; pointer-events: none; user-select: none; font-size: 14px; line-height: 1.35;
     }
-    .status { left: 12px; bottom: 12px; background: rgba(12,18,28,.66); padding: 8px 10px; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.06) inset; }
+    .status {
+      left: 12px; bottom: 12px; background: rgba(12,18,28,.66);
+      padding: 8px 10px; border-radius: 8px; box-shadow: 0 0 0 1px rgba(255,255,255,.06) inset;
+    }
   </style>
 </head>
 <body>
-  <div id="graph"></div>
+  <div id="graph" aria-label="3D donor map"></div>
   <div id="status" class="hud status">Status: loading sheet data…</div>
 
   <!-- App code -->
