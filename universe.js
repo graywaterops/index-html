@@ -7,7 +7,8 @@
 
   let Graph;
   let selectedNode = null;
-  const hiNodes = new Set(), hiLinks = new Set();
+  const forwardNodes = new Set(), backNodes = new Set();
+  const forwardLinks = new Set(), backLinks = new Set();
   const adjacency = new Map();
 
   const getId = v => (typeof v === "object" ? v.id : v);
@@ -110,26 +111,27 @@
   }
 
   function highlightPath(node){
-    hiNodes.clear(); hiLinks.clear();
+    forwardNodes.clear(); backNodes.clear();
+    forwardLinks.clear(); backLinks.clear();
     if(!node)return;
 
-    // Downstream
+    // Forward (downstream)
     function visitDown(id){
-      if(hiNodes.has(id))return;
-      hiNodes.add(id);
+      if(forwardNodes.has(id))return;
+      forwardNodes.add(id);
       (adjacency.get(id)||[]).forEach(child=>{
-        hiLinks.add(`${id}-${child}`);
+        forwardLinks.add(`${id}-${child}`);
         visitDown(child);
       });
     }
 
-    // Upstream
+    // Backtrace (upstream)
     function visitUp(id){
       Graph.graphData().links.forEach(l=>{
         const s=getId(l.source), t=getId(l.target);
-        if(t===id && !hiNodes.has(s)){
-          hiNodes.add(s);
-          hiLinks.add(`${s}-${t}`);
+        if(t===id && !backNodes.has(s)){
+          backNodes.add(s);
+          backLinks.add(`${s}-${t}`);
           visitUp(s);
         }
       });
@@ -149,7 +151,11 @@
       .graphData({nodes,links})
       .nodeLabel(n=>`<strong>${n.type}</strong> #${n.id}<br/>Gift: $${n.gift}`)
       .nodeColor(n=>{
-        if(selectedNode && !hiNodes.has(n.id)) return "#333";
+        if(selectedNode){
+          if(forwardNodes.has(n.id)) return "#00ff88";   // green highlight for forward
+          if(backNodes.has(n.id)) return "#ffdd33";      // yellow highlight for backtrace
+          return "#333";
+        }
         return n.type==="root"?"#1f4aa8":
                n.type==="primary"?"#7cc3ff":
                n.type==="extra"?"#2ecc71":"#e74c3c";
@@ -157,24 +163,27 @@
       .nodeVal(n=>n.type==="root"?12:n.type==="primary"?8:n.type==="extra"?6:4)
       .linkColor(l=>{
         const key=`${getId(l.source)}-${getId(l.target)}`;
-        return hiLinks.has(key)?"#ffff66":"rgba(180,180,180,0.15)";
+        if(forwardLinks.has(key)) return "#00ff88";
+        if(backLinks.has(key)) return "#ffdd33";
+        return "rgba(180,180,180,0.15)";
       })
-      .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
+      .linkWidth(l=>{
+        const key=`${getId(l.source)}-${getId(l.target)}`;
+        return (forwardLinks.has(key)||backLinks.has(key))?2:0.5;
+      })
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
-      // layout forces
       .d3Force("charge", d3.forceManyBody().strength(-120))
       .d3Force("link", d3.forceLink().distance(40).strength(0.5))
       .d3VelocityDecay(0.4)
       .cooldownTicks(200)
-      .cooldownTime(15000);   // freeze after ~15s
+      .cooldownTime(15000);
 
-    // ✅ FIX: update status once data is loaded
     if(statusEl) {
-      statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its full path. Esc=clear`;
+      statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow). Esc=clear`;
     }
 
     window.addEventListener("keydown",e=>{
-      if(e.key==="Escape"){selectedNode=null;hiNodes.clear();hiLinks.clear();Graph.refresh();}
+      if(e.key==="Escape"){selectedNode=null;forwardNodes.clear();backNodes.clear();forwardLinks.clear();backLinks.clear();Graph.refresh();}
     });
   }
 
