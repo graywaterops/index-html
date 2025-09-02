@@ -37,6 +37,7 @@
     const text = await res.text();
     const rows = text.split(/\r?\n/).filter(l=>l.trim()).map(parseCsvLine);
 
+    // Referral distribution
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
     let totalProb=0;
     const referralProbs = referralRows.map(([k,p])=>{
@@ -44,11 +45,15 @@
     });
     if (Math.abs(totalProb-1)>0.01) referralProbs.forEach(r=>r.p/=totalProb);
 
+    // Gift distribution
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
-    const giftProbs = giftRows.map(([amt,p])=>({
-      amount: parseFloat(String(amt).replace(/[^0-9.]/g,"")),
-      p:+p/100
-    }));
+    let giftTotal = 0;
+    const giftProbs = giftRows.map(([amt,p])=>{
+      const amount=parseFloat(String(amt).replace(/[^0-9.]/g,""));
+      const prob=parseFloat(p)/100; giftTotal+=prob;
+      return {amount,p:prob};
+    });
+    if (Math.abs(giftTotal-1)>0.01) giftProbs.forEach(g=>g.p/=giftTotal);
 
     const seeds = parseInt((rows.find(r=>r[0]?.toLowerCase().includes("seed coins"))||[])[1])||100;
     const generations = parseInt((rows.find(r=>r[0]?.toLowerCase().includes("hand-off generations"))||[])[1])||6;
@@ -73,10 +78,12 @@
       for(let {k,p} of referralProbs){sum+=p;if(r<=sum)return k;}
       return 0;
     }
+
     function sampleGift(giftProbs){
-      const r=Math.random(); let sum=0;
+      const total=giftProbs.reduce((s,g)=>s+g.p,0);
+      const r=Math.random()*total; let sum=0;
       for(let {amount,p} of giftProbs){sum+=p;if(r<=sum)return amount;}
-      return giftProbs[giftProbs.length-1].amount;
+      return giftProbs[0].amount;
     }
 
     function grow(parentId,depth,parentType="root"){
@@ -138,8 +145,8 @@
       })
       .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
-      .d3VelocityDecay(0.3)
-      .cooldownTicks(300);
+      .d3VelocityDecay(0.5)   // dampen motion
+      .cooldownTicks(150);    // stop physics earlier
 
     if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its downline. Esc=clear`;
 
