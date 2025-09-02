@@ -35,7 +35,7 @@
     const lines = text.split(/\r?\n/).filter(l => l.trim());
     const rows = lines.map(parseCsvLine);
 
-    // Find the "Referral distribution" block
+    // Find the referral distribution block
     const referralRows = [];
     for (let r of rows) {
       if (/^0$|^1$|^2$|^3$|^4$|^5$/.test(r[0])) {
@@ -43,7 +43,7 @@
       }
     }
 
-    const probs = referralRows.map(([k, p]) => ({ k, p: p / 100 })); // convert % to fraction
+    const probs = referralRows.map(([k, p]) => ({ k, p: p / 100 })); // % to fraction
 
     // Seed coins
     const seedRow = rows.find(r => r[0] && r[0].toLowerCase().includes("seed coins"));
@@ -79,28 +79,31 @@
       return 0;
     }
 
-    // Build out seeds
+    // Recursive growth
+    function grow(parentId, depth, parentType = "root") {
+      if (depth >= generations) return;
+      const k = sampleK();
+      if (k <= 0) return;
+
+      // First referral is "primary" unless parent was extra/down
+      const firstType = (parentType === "extra" || parentType === "down") ? "down" : "primary";
+      const first = addNode(firstType, parentId);
+      grow(first, depth + 1, firstType);
+
+      // Extras become "extra" only if parent is root/primary; otherwise cascade "down"
+      for (let i = 1; i < k; i++) {
+        const type = (parentType === "extra" || parentType === "down") ? "down" : "extra";
+        const child = addNode(type, parentId);
+        grow(child, depth + 1, type);
+      }
+    }
+
+    // Seeds
     const roots = [];
     for (let i = 0; i < seeds; i++) {
       roots.push(addNode("root"));
     }
-
-    // Grow tree
-    function grow(parentId, depth) {
-      if (depth >= generations) return;
-      const k = sampleK();
-      if (k <= 0) return;
-      // first child = primary
-      const first = addNode("primary", parentId);
-      grow(first, depth + 1);
-      // extras
-      for (let i = 1; i < k; i++) {
-        const extra = addNode("extra", parentId);
-        grow(extra, depth + 1);
-      }
-    }
-
-    roots.forEach(r => grow(r, 0));
+    roots.forEach(r => grow(r, 0, "root"));
 
     return { nodes, links };
   }
