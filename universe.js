@@ -110,24 +110,29 @@
   function highlightPath(node){
     clearHighlights();
 
-    // forward
     function visitDown(id){
       const n=nodes.find(nn=>nn.id===id); if(!n) return;
+      if(n.highlight==="forward"||n.highlight==="selected") return;
       n.highlight="forward";
-      links.filter(l=>getId(l.source)===id).forEach(l=>{
-        l.highlight="forward";
-        visitDown(getId(l.target));
+      links.forEach(l=>{
+        const sid=getId(l.source), tid=getId(l.target);
+        if(sid===id){
+          l.highlight="forward";
+          visitDown(tid);
+        }
       });
     }
 
-    // backtrace
     function visitUp(id){
-      links.filter(l=>getId(l.target)===id).forEach(l=>{
-        l.highlight="back";
-        const parent=nodes.find(nn=>nn.id===getId(l.source));
-        if(parent && parent.highlight!=="back"){
-          parent.highlight="back";
-          visitUp(parent.id);
+      links.forEach(l=>{
+        const sid=getId(l.source), tid=getId(l.target);
+        if(tid===id){
+          l.highlight="back";
+          const parent=nodes.find(nn=>nn.id===sid);
+          if(parent && parent.highlight!=="back"){
+            parent.highlight="back";
+            visitUp(parent.id);
+          }
         }
       });
     }
@@ -136,7 +141,7 @@
     visitDown(node.id);
     visitUp(node.id);
 
-    Graph.graphData({nodes,links}); // force redraw
+    Graph.graphData({nodes,links}); // redraw with updated highlights
   }
 
   // --- Draw graph ---
@@ -167,7 +172,7 @@
       .cooldownTicks(150)
       .cooldownTime(8000);
 
-    if(statusEl) statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to see forward (green) vs backtrace (yellow).`;
+    if(statusEl) statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node for forward (green) and backtrace (yellow).`;
 
     // stop physics
     setTimeout(()=>{
