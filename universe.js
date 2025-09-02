@@ -113,7 +113,7 @@
     hiNodes.clear(); hiLinks.clear();
     if(!node)return;
 
-    // Downstream (children)
+    // Downstream
     function visitDown(id){
       if(hiNodes.has(id))return;
       hiNodes.add(id);
@@ -123,7 +123,7 @@
       });
     }
 
-    // Upstream (ancestors)
+    // Upstream
     function visitUp(id){
       Graph.graphData().links.forEach(l=>{
         const s=getId(l.source), t=getId(l.target);
@@ -161,10 +161,10 @@
       })
       .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
-      .d3VelocityDecay(0.5)   // calmer physics
-      .cooldownTicks(150);    // stabilize quickly
+      .d3VelocityDecay(1.0)   // kill physics movement
+      .cooldownTicks(0);      // no continuous drifting
 
-    if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its full path. Esc=clear`;
+    if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its path. Esc=clear`;
 
     window.addEventListener("keydown",e=>{
       if(e.key==="Escape"){selectedNode=null;hiNodes.clear();hiLinks.clear();Graph.refresh();}
