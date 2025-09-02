@@ -10,10 +10,11 @@
   const hiNodes = new Set(), hiLinks = new Set();
   const adjacency = new Map();
 
+  const getId = v => (typeof v === "object" ? v.id : v);
+
   // ---- CSV line parser ----
   function parseCsvLine(line) {
-    const out = [];
-    let cur = "", inQuotes = false;
+    const out = []; let cur = "", inQuotes = false;
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
       if (inQuotes) {
@@ -35,27 +36,21 @@
     const res = await fetch(CSV_URL, { cache: "no-store" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    const lines = text.split(/\r?\n/).filter(l => l.trim());
-    const rows = lines.map(parseCsvLine);
+    const rows = text.split(/\r?\n/).filter(l => l.trim()).map(parseCsvLine);
 
-    // Referral distribution (k=0..5)
+    // Referral distribution
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
-    const referralProbs = referralRows.map(([k, p]) => ({ k: parseInt(k), p: parseFloat(p)/100 }));
+    const referralProbs = referralRows.map(([k, p]) => ({ k: +k, p: +p/100 }));
 
     // Gift distribution
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
     const giftProbs = giftRows.map(([amt, p]) => ({
       amount: parseFloat(String(amt).replace(/[^0-9.]/g,"")),
-      p: parseFloat(p)/100
+      p: +p/100
     }));
 
-    // Seed coins
-    const seedRow = rows.find(r => r[0] && r[0].toLowerCase().includes("seed coins"));
-    const seeds = seedRow ? parseInt(seedRow[1]) : 100;
-
-    // Generations
-    const genRow = rows.find(r => r[0] && r[0].toLowerCase().includes("hand-off generations"));
-    const generations = genRow ? parseInt(genRow[1]) : 6;
+    const seeds = parseInt((rows.find(r => r[0]?.toLowerCase().includes("seed coins"))||[])[1]) || 100;
+    const generations = parseInt((rows.find(r => r[0]?.toLowerCase().includes("hand-off generations"))||[])[1]) || 6;
 
     return { referralProbs, giftProbs, seeds, generations };
   }
@@ -74,45 +69,34 @@
     };
 
     function sampleK() {
-      const r = Math.random();
-      let sum = 0;
-      for (let { k, p } of referralProbs) {
-        sum += p;
-        if (r <= sum) return k;
-      }
+      const r = Math.random(); let sum = 0;
+      for (let { k, p } of referralProbs) { sum += p; if (r <= sum) return k; }
       return 0;
     }
 
     function sampleGift(giftProbs) {
-      const r = Math.random();
-      let sum = 0;
-      for (let { amount, p } of giftProbs) {
-        sum += p;
-        if (r <= sum) return amount;
-      }
-      return giftProbs[giftProbs.length - 1].amount;
+      const r = Math.random(); let sum = 0;
+      for (let { amount, p } of giftProbs) { sum += p; if (r <= sum) return amount; }
+      return giftProbs[giftProbs.length-1].amount;
     }
 
-    function grow(parentId, depth, parentType = "root") {
+    function grow(parentId, depth, parentType="root") {
       if (depth >= generations) return;
       const k = sampleK();
       if (k <= 0) return;
 
-      // First referral
-      const firstType = (parentType === "extra" || parentType === "down") ? "down" : "primary";
+      const firstType = (parentType==="extra"||parentType==="down") ? "down" : "primary";
       const first = addNode(firstType, parentId);
-      grow(first, depth + 1, firstType);
+      grow(first, depth+1, firstType);
 
-      // Extras
-      for (let i = 1; i < k; i++) {
-        const type = (parentType === "extra" || parentType === "down") ? "down" : "extra";
+      for (let i=1;i<k;i++) {
+        const type = (parentType==="extra"||parentType==="down") ? "down" : "extra";
         const child = addNode(type, parentId);
-        grow(child, depth + 1, type);
+        grow(child, depth+1, type);
       }
     }
 
-    // Roots
-    for (let i = 0; i < seeds; i++) {
+    for (let i=0;i<seeds;i++) {
       const root = addNode("root");
       grow(root, 0, "root");
     }
@@ -123,19 +107,16 @@
   function buildAdjacency(nodes, links) {
     adjacency.clear();
     nodes.forEach(n => adjacency.set(n.id, []));
-    links.forEach(l => {
-      adjacency.get(l.source).push(l.target);
-    });
+    links.forEach(l => adjacency.get(getId(l.source)).push(getId(l.target)));
   }
 
   function highlightPath(node) {
-    hiNodes.clear();
-    hiLinks.clear();
+    hiNodes.clear(); hiLinks.clear();
     if (!node) return;
     function visit(id) {
       if (hiNodes.has(id)) return;
       hiNodes.add(id);
-      (adjacency.get(id) || []).forEach(child => {
+      (adjacency.get(id)||[]).forEach(child => {
         hiLinks.add(`${id}-${child}`);
         visit(child);
       });
@@ -153,59 +134,34 @@
       .showNavInfo(false)
       .graphData({ nodes, links })
       .nodeLabel(n =>
-        `<div>
-          <strong>${n.type.toUpperCase()}</strong> #${n.id}<br/>
-          Gift: $${n.gift.toLocaleString()}
-        </div>`
+        `<div><strong>${n.type.toUpperCase()}</strong> #${n.id}<br/>Gift: $${n.gift.toLocaleString()}</div>`
       )
       .nodeColor(n => {
         if (selectedNode && !hiNodes.has(n.id)) return "#333";
-        return n.type === "root" ? "#1f4aa8" :
-               n.type === "primary" ? "#7cc3ff" :
-               n.type === "extra" ? "#2ecc71" : "#e74c3c";
+        return n.type==="root" ? "#1f4aa8" :
+               n.type==="primary" ? "#7cc3ff" :
+               n.type==="extra" ? "#2ecc71" : "#e74c3c";
       })
-      .nodeVal(n =>
-        n.type === "root" ? 12 :
-        n.type === "primary" ? 8 :
-        n.type === "extra" ? 6 : 4
-      )
-      .linkColor(l => {
-        const key = `${l.source}-${l.target}`;
-        return hiLinks.has(key) ? "#ffff66" : "rgba(180,180,180,0.2)";
-      })
-      .linkWidth(l => hiLinks.has(`${l.source}-${l.target}`) ? 2 : 0.5)
-      .onNodeClick(node => {
-        highlightPath(node);
-        Graph.refresh();
-      })
-      .d3VelocityDecay(0.1)        // let nodes keep floating
-      .warmupTicks(0)              // never stop physics
-      .cooldownTicks(Infinity);    // infinite motion
+      .nodeVal(n => n.type==="root"?12:n.type==="primary"?8:n.type==="extra"?6:4)
+      .linkColor(l => hiLinks.has(`${getId(l.source)}-${getId(l.target)}`) ? "#ffff66" : "rgba(180,180,180,0.15)")
+      .linkWidth(l => hiLinks.has(`${getId(l.source)}-${getId(l.target)}`) ? 2 : 0.5)
+      .onNodeClick(node => { highlightPath(node); Graph.refresh(); })
+      .d3VelocityDecay(0.3)   // smoother motion
+      .cooldownTicks(300);    // settle after 300 ticks
 
     if (statusEl) statusEl.textContent =
-      `Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight children. Esc to clear.`;
-
-    window.addEventListener("keydown", e => {
-      if (e.key === "Escape") {
-        selectedNode = null;
-        hiNodes.clear();
-        hiLinks.clear();
-        Graph.refresh();
-      }
-    });
+      `Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its downline.`;
   }
 
   // ---- Run ----
   (async () => {
     try {
       const { referralProbs, giftProbs, seeds, generations } = await loadInputs();
-      console.log("Parsed inputs:", { referralProbs, giftProbs, seeds, generations });
       const data = genUniverse({ referralProbs, giftProbs, seeds, generations });
       draw(data);
     } catch (err) {
       console.error("[3D map] Load error:", err);
-      container.innerHTML =
-        `<div style="color:#fff;padding:16px;font:14px/1.4 system-ui">Error: ${err.message}</div>`;
+      container.innerHTML = `<div style="color:#fff;padding:16px">Error: ${err.message}</div>`;
     }
   })();
 })();
