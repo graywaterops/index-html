@@ -1,0 +1,56 @@
+html, body {
+  margin: 0; padding: 0;
+  background: #000; color: #ddd;
+  height: 100%; width: 100%;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+#graph {
+  position: fixed;
+  inset: 0;
+}
+
+#ui {
+  position: fixed;
+  top: 10px; left: 10px;
+  display: flex; gap: 12px; align-items: center;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  backdrop-filter: blur(6px);
+  z-index: 10;
+}
+
+#status {
+  font-size: 13px; line-height: 1.35;
+  padding-right: 10px;
+  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+#legend {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  font-size: 12px;
+  padding: 0 10px;
+  border-right: 1px solid rgba(255,255,255,0.1);
+}
+
+.swatch {
+  display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.25);
+  vertical-align: -1px;
+}
+.swatch.root { background: #153d8a; }
+.swatch.primary { background: #7cc3ff; }
+.swatch.extra { background: #e74c3c; }
+.swatch.forward { background: #00ff88; }
+.swatch.back { background: #ffcc33; }
+.swatch.selected { background: #ffffff; }
+
+#buttons { display: flex; gap: 6px; padding-left: 10px; }
+#buttons button {
+  appearance: none; border: 1px solid rgba(255,255,255,0.2); border-radius: 6px;
+  background: rgba(255,255,255,0.06); color: #eee; padding: 6px 10px; font-size: 12px;
+  cursor: pointer;
+}
+#buttons button:hover { background: rgba(255,255,255,0.12); }
