@@ -161,8 +161,9 @@
       })
       .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
-      .d3VelocityDecay(1.0)   // kill physics movement
-      .cooldownTicks(0);      // no continuous drifting
+      .d3Force("charge", d3.forceManyBody().strength(-40))  // spread out nodes
+      .d3VelocityDecay(0.3)   // let layout run
+      .cooldownTicks(300);    // stop after layout stabilizes
 
     if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its path. Esc=clear`;
 
