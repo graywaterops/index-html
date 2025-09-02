@@ -112,15 +112,31 @@
   function highlightPath(node){
     hiNodes.clear(); hiLinks.clear();
     if(!node)return;
-    function visit(id){
+
+    // Downstream (children)
+    function visitDown(id){
       if(hiNodes.has(id))return;
       hiNodes.add(id);
       (adjacency.get(id)||[]).forEach(child=>{
         hiLinks.add(`${id}-${child}`);
-        visit(child);
+        visitDown(child);
       });
     }
-    visit(node.id);
+
+    // Upstream (ancestors)
+    function visitUp(id){
+      Graph.graphData().links.forEach(l=>{
+        const s=getId(l.source), t=getId(l.target);
+        if(t===id && !hiNodes.has(s)){
+          hiNodes.add(s);
+          hiLinks.add(`${s}-${t}`);
+          visitUp(s);
+        }
+      });
+    }
+
+    visitDown(node.id);
+    visitUp(node.id);
     selectedNode=node;
   }
 
@@ -145,10 +161,10 @@
       })
       .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
-      .d3VelocityDecay(0.5)   // dampen motion
-      .cooldownTicks(150);    // stop physics earlier
+      .d3VelocityDecay(0.5)   // calmer physics
+      .cooldownTicks(150);    // stabilize quickly
 
-    if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its downline. Esc=clear`;
+    if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its full path. Esc=clear`;
 
     window.addEventListener("keydown",e=>{
       if(e.key==="Escape"){selectedNode=null;hiNodes.clear();hiLinks.clear();Graph.refresh();}
