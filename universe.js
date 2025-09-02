@@ -162,13 +162,16 @@
       .linkWidth(l=>hiLinks.has(`${getId(l.source)}-${getId(l.target)}`)?2:0.5)
       .onNodeClick(node=>{highlightPath(node);Graph.refresh();})
       // layout forces
-      .d3Force("charge", d3.forceManyBody().strength(-120))  // strong repulsion
+      .d3Force("charge", d3.forceManyBody().strength(-120))
       .d3Force("link", d3.forceLink().distance(40).strength(0.5))
       .d3VelocityDecay(0.4)
-      .cooldownTicks(200)      // run ~200 ticks
-      .cooldownTime(20000);    // then freeze layout
+      .cooldownTicks(200)
+      .cooldownTime(15000);   // freeze after ~15s
 
-    if(statusEl)statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its full path. Esc=clear`;
+    // ✅ FIX: update status once data is loaded
+    if(statusEl) {
+      statusEl.textContent=`Status: ${nodes.length} donors, ${links.length} referrals — click a node to highlight its full path. Esc=clear`;
+    }
 
     window.addEventListener("keydown",e=>{
       if(e.key==="Escape"){selectedNode=null;hiNodes.clear();hiLinks.clear();Graph.refresh();}
@@ -177,6 +180,7 @@
 
   // ---- Run ----
   (async()=>{
+    if(statusEl) statusEl.textContent="Status: loading sheet data...";
     const {referralProbs,giftProbs,seeds,generations}=await loadInputs();
     const data=genUniverse({referralProbs,giftProbs,seeds,generations});
     draw(data);
