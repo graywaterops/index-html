@@ -38,10 +38,29 @@
     const text = await res.text();
     const rows = text.split(/\r?\n/).filter(l => l.trim()).map(parseCsvLine);
 
-    // Referral distribution
-    const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
-    const referralProbs = referralRows.map(([k, p]) => ({ k: +k, p: +p/100 }));
+   // Referral distribution (k=0..5)
+const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
+let totalProb = 0;
+const referralProbs = referralRows.map(([k, p]) => {
+  const val = parseFloat(p)/100;
+  totalProb += val;
+  return { k: parseInt(k), p: val };
+});
 
+// Normalize if needed
+if (Math.abs(totalProb - 1) > 0.01) {
+  referralProbs.forEach(r => r.p = r.p / totalProb);
+}
+
+function sampleK() {
+  const r = Math.random();
+  let sum = 0;
+  for (let { k, p } of referralProbs) {
+    sum += p;
+    if (r <= sum) return k;
+  }
+  return 0;
+}
     // Gift distribution
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
     const giftProbs = giftRows.map(([amt, p]) => ({
@@ -165,3 +184,4 @@
     }
   })();
 })();
+
