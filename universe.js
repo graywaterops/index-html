@@ -7,7 +7,7 @@
 
   let Graph;
   let nodes = [], links = [];
-  const MAX_VISIBLE_NODES = 50000; // cap
+  const MAX_VISIBLE_NODES = 40000; // cap to avoid overload
 
   const getId = v => (typeof v === "object" ? v.id : v);
 
@@ -36,6 +36,7 @@
     const text = await res.text();
     const rows = text.split(/\r?\n/).filter(l=>l.trim()).map(parseCsvLine);
 
+    // referral probabilities
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
     let totalProb=0;
     const referralProbs = referralRows.map(([k,p])=>{
@@ -43,6 +44,7 @@
     });
     if (Math.abs(totalProb-1)>0.01) referralProbs.forEach(r=>r.p/=totalProb);
 
+    // gift probabilities
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
     let giftTotal=0;
     const giftProbs = giftRows.map(([amt,p])=>{
@@ -162,22 +164,23 @@
         if(n.highlight==="selected") return "#ffffff";
         if(n.highlight==="forward") return "#00ff88";
         if(n.highlight==="back") return "#ffdd33";
+        if(n.highlight===null) return "#333333"; // dim everything else
         return n.type==="root"?"#1f4aa8":
                n.type==="primary"?"#7cc3ff":
                n.type==="extra"?"#2ecc71":"#e74c3c";
       })
-      .nodeVal(n=>n.type==="root"?12:n.type==="primary"?8:n.type==="extra"?6:4)
+      .nodeVal(n=>n.type==="root"?14:n.type==="primary"?9:n.type==="extra"?7:5)
       .linkColor(l=>{
         if(l.highlight==="forward") return "#00ff88";
         if(l.highlight==="back") return "#ffdd33";
-        return "rgba(180,180,180,0.15)";
+        return "rgba(80,80,80,0.1)";
       })
-      .linkWidth(l=>(l.highlight?2:0.4))
+      .linkWidth(l=>(l.highlight?2:0.3))
       .onNodeClick(node=>highlightPath(node));
 
-    // Spread out layout
-    Graph.d3Force("charge").strength(-10);
-    Graph.d3Force("link").distance(120).strength(0.2);
+    // spacing (looser layout)
+    Graph.d3Force("charge").strength(-20);
+    Graph.d3Force("link").distance(200).strength(0.15);
 
     Graph.cooldownTicks(150).cooldownTime(6000).onEngineStop(()=>{
       Graph.d3Force("charge",null);
@@ -187,8 +190,7 @@
         `Status: Ready — ${totalNodes.toLocaleString()} donors, ${totalLinks.toLocaleString()} referrals. (Showing ~${nodes.length.toLocaleString()} nodes) Click a node.`;
     });
 
-    if(statusEl) statusEl.textContent=
-      `Status: building layout... (pins when settled)`;
+    if(statusEl) statusEl.textContent="Status: building layout...";
   }
 
   // --- Run ---
