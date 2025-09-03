@@ -77,6 +77,25 @@
     return { nodes, links };
   }
 
+  // --- Chain stats ---
+  function getChainStats(node) {
+    let visited = new Set();
+    let totalDonation = 0;
+
+    function dfs(id) {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const n = nodes.find(nn => nn.id === id);
+      if (n) totalDonation += 50; // static $50/donor
+      links.forEach(l => {
+        if (l.source.id === id) dfs(l.target.id);
+      });
+    }
+
+    dfs(node.id);
+    return { count: visited.size, totalDonation };
+  }
+
   // --- Highlight logic ---
   function clearHighlights() {
     highlightNodes.clear();
@@ -112,6 +131,12 @@
 
     visitDown(node.id);
     visitUp(node.id);
+
+    const { count, totalDonation } = getChainStats(node);
+    if (statusEl) {
+      statusEl.textContent =
+        `Selected node #${node.id} | Chain size: ${count} | Total: $${totalDonation}`;
+    }
 
     Graph.refresh();
   }
@@ -185,6 +210,19 @@
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
+
+  // --- ESC reset ---
+  document.addEventListener("keydown", ev => {
+    if (ev.key === "Escape") {
+      clearHighlights();
+      selectedNode = null;
+      if (statusEl) {
+        statusEl.textContent =
+          `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+      }
+      Graph.refresh();
+    }
+  });
 
   // --- Run ---
   const data = generateUniverse(1000);
