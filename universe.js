@@ -7,6 +7,7 @@
 
   let Graph;
   let nodes = [], links = [];
+  const MAX_VISIBLE_NODES = 50000; // cap
 
   const getId = v => (typeof v === "object" ? v.id : v);
 
@@ -35,7 +36,6 @@
     const text = await res.text();
     const rows = text.split(/\r?\n/).filter(l=>l.trim()).map(parseCsvLine);
 
-    // referral probabilities
     const referralRows = rows.filter(r => /^[0-5]$/.test(r[0]));
     let totalProb=0;
     const referralProbs = referralRows.map(([k,p])=>{
@@ -43,7 +43,6 @@
     });
     if (Math.abs(totalProb-1)>0.01) referralProbs.forEach(r=>r.p/=totalProb);
 
-    // gift probabilities
     const giftRows = rows.filter(r => /^\$?[0-9,]+/.test(r[0]));
     let giftTotal=0;
     const giftProbs = giftRows.map(([amt,p])=>{
@@ -61,13 +60,19 @@
 
   // --- Universe sim ---
   function genUniverse({ referralProbs, giftProbs, seeds, generations }) {
-    nodes=[]; links=[]; let id=0;
+    nodes=[]; links=[]; let id=0, totalNodes=0, totalLinks=0;
 
     const addNode=(type,parentId=null)=>{
       const gift=sampleGift(giftProbs);
       const node={id:id++,type,gift,highlight:null};
-      nodes.push(node);
-      if(parentId!==null) links.push({source:parentId,target:node.id,highlight:null});
+      totalNodes++;
+      if (nodes.length < MAX_VISIBLE_NODES) nodes.push(node);
+
+      if(parentId!==null){
+        const link={source:parentId,target:node.id,highlight:null};
+        totalLinks++;
+        if (links.length < MAX_VISIBLE_NODES*2) links.push(link);
+      }
       return node.id;
     };
 
@@ -98,7 +103,7 @@
     }
 
     for(let i=0;i<seeds;i++){const root=addNode("root"); grow(root,0,"root");}
-    return {nodes,links};
+    return {nodes,links,totalNodes,totalLinks};
   }
 
   // --- Highlight logic ---
@@ -141,11 +146,11 @@
     visitDown(node.id);
     visitUp(node.id);
 
-    Graph.graphData({nodes,links}); // redraw with updated highlights
+    Graph.graphData({nodes,links});
   }
 
   // --- Draw graph ---
-  function draw({nodes,links}){
+  function draw({nodes,links,totalNodes,totalLinks}){
     Graph=ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({nodes,links})
@@ -170,16 +175,16 @@
       .linkWidth(l=>(l.highlight?2:0.4))
       .onNodeClick(node=>highlightPath(node));
 
-    // Better forces for spread
+    // Spread out layout
     Graph.d3Force("charge").strength(-10);
     Graph.d3Force("link").distance(120).strength(0.2);
 
-    Graph.cooldownTicks(150).cooldownTime(8000).onEngineStop(()=>{
+    Graph.cooldownTicks(150).cooldownTime(6000).onEngineStop(()=>{
       Graph.d3Force("charge",null);
       Graph.d3Force("link",null);
       Graph.d3Force("center",null);
       if(statusEl) statusEl.textContent=
-        `Status: Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+        `Status: Ready — ${totalNodes.toLocaleString()} donors, ${totalLinks.toLocaleString()} referrals. (Showing ~${nodes.length.toLocaleString()} nodes) Click a node.`;
     });
 
     if(statusEl) statusEl.textContent=
