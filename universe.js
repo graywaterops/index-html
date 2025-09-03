@@ -5,7 +5,7 @@
   const container = document.getElementById("graph");
   const statusEl = document.getElementById("status");
 
-  let Graph, nodes = [], links = [];
+  let Graph, nodes = [], links = [], adj = new Map();
 
   const getId = v => (typeof v === "object" ? v.id : v);
 
@@ -51,22 +51,22 @@
     });
     if (Math.abs(giftTotal-1)>0.01) giftProbs.forEach(g=>g.p/=giftTotal);
 
-    const seeds = 250; // scale down seed coins
-    const totalDonors = 1000; // cap total universe
-    const generations = 6;
-
-    return { referralProbs, giftProbs, seeds, generations, totalDonors };
+    return { referralProbs, giftProbs, seeds:250, generations:6, totalDonors:1000 };
   }
 
   // --- Universe generator ---
   function genUniverse({ referralProbs, giftProbs, seeds, generations, totalDonors }) {
-    nodes=[]; links=[]; let id=0;
+    nodes=[]; links=[]; adj.clear(); let id=0;
 
     const addNode=(type,parentId=null)=>{
       const gift=sampleGift(giftProbs);
-      const node={id:id++,type,gift,highlight:null};
+      const node={id:id++,type,gift,highlight:null,cumulative:0};
       nodes.push(node);
-      if(parentId!==null) links.push({source:parentId,target:node.id,highlight:null});
+      if(parentId!==null){
+        links.push({source:parentId,target:node.id,highlight:null});
+        if(!adj.has(parentId)) adj.set(parentId,[]);
+        adj.get(parentId).push(node.id);
+      }
       return node.id;
     };
 
@@ -93,7 +93,22 @@
     }
 
     for(let i=0;i<seeds;i++){const root=addNode("root"); grow(root,0);}
+    computeCumulative();
     return {nodes,links};
+  }
+
+  // --- Compute cumulative downstream donations ---
+  function computeCumulative(){
+    function dfs(id){
+      const n=nodes.find(nn=>nn.id===id);
+      let total=n.gift;
+      (adj.get(id)||[]).forEach(childId=>{
+        total+=dfs(childId);
+      });
+      n.cumulative=total;
+      return total;
+    }
+    nodes.filter(n=>n.type==="root").forEach(r=>dfs(r.id));
   }
 
   // --- Highlight paths ---
@@ -142,7 +157,11 @@
     Graph=ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({nodes,links})
-      .nodeLabel(n=>`<strong>${n.type}</strong> #${n.id}<br/>Gift: $${n.gift}`)
+      .nodeLabel(n=>`
+        <strong>${n.type}</strong> #${n.id}<br/>
+        Gift: $${n.gift}<br/>
+        Cumulative downstream: $${n.cumulative}
+      `)
       .nodeColor(n=>{
         if(n.highlight==="selected") return "#ffffff";
         if(n.highlight==="forward") return "#00ff88";
@@ -151,7 +170,7 @@
                n.type==="primary"?"#7cc3ff":
                n.type==="extra"?"#2ecc71":"#e74c3c";
       })
-      .nodeVal(n=>n.type==="root"?16:n.type==="primary"?10:n.type==="extra"?8:6)
+      .nodeVal(n=>Math.log(n.cumulative+50)) // bigger = bigger fundraising influence
       .linkColor(l=>{
         if(l.highlight==="forward") return "#00ff88";
         if(l.highlight==="back") return "#ffdd33";
@@ -159,10 +178,10 @@
       })
       .linkWidth(l=>(l.highlight?2:0.3))
       .onNodeClick(node=>highlightPath(node))
-      .d3Force("charge", d3.forceManyBody().strength(-40))
-      .d3Force("link", d3.forceLink().distance(25).strength(0.4))
+      .d3Force("charge", d3.forceManyBody().strength(-60))
+      .d3Force("link", d3.forceLink().distance(35).strength(0.4))
       .d3Force("center", d3.forceCenter())
-      .d3VelocityDecay(0.9); // prevent drifting
+      .d3VelocityDecay(0.9);
 
     if(statusEl) statusEl.textContent=`Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
   }
