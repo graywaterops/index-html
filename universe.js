@@ -1,43 +1,69 @@
 (() => {
   const container = document.getElementById("graph");
   const statusEl = document.getElementById("status");
-  const sizeSlider = document.getElementById("nodeSize");
+  const slider = document.getElementById("nodeSize");
 
   let Graph, nodes = [], links = [];
   let selectedNode = null;
 
-  // ---- Generate Demo Data ----
-  function generateUniverse(seeds = 50, generations = 4) {
+  // ---- Generate donors ----
+  function generateUniverse(seedCount = 250, total = 1000) {
     nodes = [];
     links = [];
     let id = 0;
 
-    function addNode(type, parentId = null, donation = 50) {
+    const addNode = (type, parent = null, donation = 50) => {
       const node = { id: id++, type, donation, highlight: null };
       nodes.push(node);
-      if (parentId !== null) links.push({ source: parentId, target: node.id, highlight: null });
+      if (parent !== null) links.push({ source: parent, target: node.id, highlight: null });
       return node.id;
+    };
+
+    // Probability spread
+    const distribution = [
+      { k: 0, p: 0.30 },   // 30% find no one
+      { k: 1, p: 0.36 },   // 36% find 1
+      { k: 2, p: 0.22 },   // 22% find 2
+      { k: 3, p: 0.09 },   // 9% find 3
+      { k: 4, p: 0.026 },  // 2.6% find 4
+      { k: 5, p: 0.004 }   // balance find 5
+    ];
+
+    function sampleK() {
+      const r = Math.random();
+      let sum = 0;
+      for (let { k, p } of distribution) {
+        sum += p;
+        if (r <= sum) return k;
+      }
+      return 0;
     }
 
-    function grow(parentId, depth) {
-      if (depth >= generations) return;
-      const children = Math.floor(Math.random() * 3); // 0–2 children
-      for (let i = 0; i < children; i++) {
-        const type = i === 0 ? "primary" : "extra";
-        const donation = [50, 100, 250, 500][Math.floor(Math.random()*4)];
-        const childId = addNode(type, parentId, donation);
-        grow(childId, depth + 1);
+    // Create seed donors
+    for (let i = 0; i < seedCount; i++) {
+      const root = addNode("root", null, 50);
+      grow(root, "root");
+    }
+
+    function grow(parent, parentType) {
+      const k = sampleK();
+      if (k === 0) return;
+
+      // First is primary
+      const primary = addNode("primary", parent, 50);
+      grow(primary, "primary");
+
+      // Extra children become downline
+      for (let i = 1; i < k; i++) {
+        const extra = addNode("extra", parent, 50);
+        grow(extra, "extra");
       }
     }
 
-    for (let i = 0; i < seeds; i++) {
-      const root = addNode("root", null, 50);
-      grow(root, 0);
-    }
     return { nodes, links };
   }
 
-  // ---- Highlight Path ----
+  // ---- Highlighting ----
   function clearHighlights() {
     nodes.forEach(n => n.highlight = null);
     links.forEach(l => l.highlight = null);
@@ -45,88 +71,106 @@
 
   function highlightPath(node) {
     clearHighlights();
-    node.highlight = "selected";
+    selectedNode = node;
 
-    // Forward
-    function visitDown(id) {
+    // Forward downline
+    function forward(id) {
+      nodes[id].highlight = "forward";
       links.forEach(l => {
         if (l.source === id) {
           l.highlight = "forward";
-          const child = nodes.find(n => n.id === l.target);
-          if (child) {
-            child.highlight = "forward";
-            visitDown(child.id);
-          }
+          forward(l.target);
         }
       });
     }
 
-    // Backtrace
-    function visitUp(id) {
+    // Backtrace to root
+    function backtrace(id) {
       links.forEach(l => {
         if (l.target === id) {
           l.highlight = "back";
-          const parent = nodes.find(n => n.id === l.source);
-          if (parent) {
-            parent.highlight = "back";
-            visitUp(parent.id);
-          }
+          nodes[l.source].highlight = "back";
+          backtrace(l.source);
         }
       });
     }
 
-    visitDown(node.id);
-    visitUp(node.id);
+    node.highlight = "selected";
+    forward(node.id);
+    backtrace(node.id);
 
-    const chainDonations = nodes
-      .filter(n => n.highlight === "forward" || n.highlight === "selected")
-      .reduce((sum,n)=>sum+n.donation,0);
-
-    statusEl.textContent = `Selected node #${node.id} | Chain total: $${chainDonations.toLocaleString()}`;
+    updateStatus(node);
     Graph.graphData({ nodes, links });
   }
 
-  // ---- Init Graph ----
-  function draw() {
+  // ---- Chain stats ----
+  function getChainStats(node) {
+    let visited = new Set();
+    let totalDonation = 0;
+
+    function dfs(id) {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const n = nodes.find(nn => nn.id === id);
+      if (n) totalDonation += n.donation;
+      links.forEach(l => { if (l.source === id) dfs(l.target); });
+    }
+
+    dfs(node.id);
+    return { count: visited.size, totalDonation };
+  }
+
+  function updateStatus(node = null) {
+    if (!node) {
+      statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    } else {
+      const { count, totalDonation } = getChainStats(node);
+      statusEl.textContent = `Selected node #${node.id} | Chain size: ${count} | Chain total: $${totalDonation}`;
+    }
+  }
+
+  // ---- Build Graph ----
+  function draw({ nodes, links }) {
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({ nodes, links })
-      .nodeLabel(n => `${n.type.toUpperCase()} #${n.id}<br/>Donation: $${n.donation}`)
+      .nodeLabel(n => `${n.type} #${n.id}<br/>Donation: $${n.donation}`)
       .nodeColor(n => {
-        if (n.highlight === "selected") return "#fff";
-        if (n.highlight === "forward") return "#0f0";
-        if (n.highlight === "back") return "#ff0";
+        if (n.highlight === "selected") return "#ffffff";
+        if (n.highlight === "forward") return "#00ff88";
+        if (n.highlight === "back") return "#ffdd33";
         if (n.type === "root") return "#1f4aa8";
         if (n.type === "primary") return "#7cc3ff";
         if (n.type === "extra") return "#2ecc71";
         return "#e74c3c";
       })
-      .nodeVal(n => n.highlight ? 12 : sizeSlider.value)
-      .linkColor(l => l.highlight === "forward" ? "#0f0" :
-                      l.highlight === "back" ? "#ff0" :
-                      "rgba(200,200,200,0.2)")
+      .nodeVal(n => {
+        const scale = slider.value;
+        return n.type === "root" ? 12 * scale : 6 * scale;
+      })
+      .linkColor(l => l.highlight === "forward" ? "#00ff88" :
+        l.highlight === "back" ? "#ffdd33" : "rgba(180,180,180,0.15)")
       .linkWidth(l => l.highlight ? 2 : 0.4)
-      .onNodeClick(node => highlightPath(node));
+      .onNodeClick(node => highlightPath(node))
+      .d3Force("charge", d3.forceManyBody().strength(-50))
+      .d3Force("link", d3.forceLink().distance(40).strength(0.8));
 
-    statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    updateStatus();
   }
 
-  // ---- Slider ----
-  sizeSlider.addEventListener("input", () => {
-    Graph.nodeVal(n => n.highlight ? 12 : sizeSlider.value);
-    Graph.refresh();
-  });
-
-  // ---- ESC Reset ----
+  // ---- Reset ----
   document.addEventListener("keydown", ev => {
     if (ev.key === "Escape") {
+      selectedNode = null;
       clearHighlights();
+      updateStatus();
       Graph.graphData({ nodes, links });
-      statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals.`;
     }
   });
 
-  // ---- Run ----
-  const data = generateUniverse(50, 5);
-  draw(data);
+  // ---- Init ----
+  (function init() {
+    const data = generateUniverse(250, 1000);
+    draw(data);
+  })();
 })();
