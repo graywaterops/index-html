@@ -86,7 +86,7 @@
       if(depth>=generations || nodes.length>=totalDonors) return;
       const k=sampleK(); if(k<=0)return;
       for(let i=0;i<k;i++){
-        const type=(i===0)?"primary":"extra";
+        const type=(i===0)?"primary":"down"; // ✅ ensure downline shows as "down"
         const child=addNode(type,parentId);
         grow(child,depth+1);
       }
@@ -166,11 +166,13 @@
         if(n.highlight==="selected") return "#ffffff";
         if(n.highlight==="forward") return "#00ff88";
         if(n.highlight==="back") return "#ffdd33";
-        return n.type==="root"?"#1f4aa8":
-               n.type==="primary"?"#7cc3ff":
-               n.type==="extra"?"#2ecc71":"#e74c3c";
+        if(n.type==="root") return "#1f4aa8";
+        if(n.type==="primary") return "#7cc3ff";
+        if(n.type==="extra") return "#2ecc71";
+        if(n.type==="down") return "#e74c3c"; // ✅ red is back
+        return "#999999";
       })
-      .nodeVal(n=>Math.log(n.cumulative+50)) // bigger = bigger fundraising influence
+      .nodeVal(n=>Math.log(n.cumulative+50))
       .linkColor(l=>{
         if(l.highlight==="forward") return "#00ff88";
         if(l.highlight==="back") return "#ffdd33";
@@ -178,8 +180,8 @@
       })
       .linkWidth(l=>(l.highlight?2:0.3))
       .onNodeClick(node=>highlightPath(node))
-      .d3Force("charge", d3.forceManyBody().strength(-60))
-      .d3Force("link", d3.forceLink().distance(35).strength(0.4))
+      .d3Force("charge", d3.forceManyBody().strength(-80))
+      .d3Force("link", d3.forceLink().distance(40).strength(0.4))
       .d3Force("center", d3.forceCenter())
       .d3VelocityDecay(0.9);
 
