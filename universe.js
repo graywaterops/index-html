@@ -1,192 +1,177 @@
-(() => {
-  const container = document.getElementById("graph");
-  const statusEl = document.getElementById("status");
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Smart Coin® Donor Universe</title>
+  <script src="https://unpkg.com/3d-force-graph"></script>
+  <style>
+    body { margin:0; background:#000; color:#fff; font-family:Arial, sans-serif; }
+    #graph { width:100%; height:100vh; }
+    .hud {
+      position: fixed; z-index: 10; pointer-events:none; user-select:none;
+      font-size:14px; line-height:1.35;
+    }
+    .legend {
+      top:12px; right:12px; background:rgba(0,0,0,.7);
+      padding:10px; border-radius:6px; pointer-events:auto;
+    }
+    .legend .dot { display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }
+    #status {
+      bottom:12px; left:12px; background:rgba(0,0,0,.7);
+      padding:8px 10px; border-radius:6px;
+    }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+  <div id="status">Loading...</div>
+  <div class="hud legend">
+    <div><span class="dot" style="background:#1f4aa8"></span>Root (no referrals)</div>
+    <div><span class="dot" style="background:#7cc3ff"></span>Primary</div>
+    <div><span class="dot" style="background:#2ecc71"></span>Extra</div>
+    <div><span class="dot" style="background:#e74c3c"></span>Downline</div>
+    <div><span class="dot" style="background:#00ff88"></span>Forward path</div>
+    <div><span class="dot" style="background:#ffdd33"></span>Backtrace</div>
+    <div><span class="dot" style="background:#ffffff"></span>Selected</div>
+  </div>
 
-  let Graph;
-  let nodes = [], links = [];
-  let highlightNodes = new Set(), highlightLinks = new Set();
-  let selectedNode = null;
-  let nodeSize = 4;
+  <script>
+    // --- Settings ---
+    const SEED_DONORS = 250;
+    const TOTAL_DONORS = 1000;
+    const DONATION_AMOUNTS = [50, 100, 250, 500, 1000, 5000];
+    const DONATION_PROBS = [0.7, 0.2, 0.05, 0.04, 0.006, 0.004]; // must sum to 1
 
-  const COLORS = {
-    root: "#1f4aa8",       // dark blue
-    primary: "#7cc3ff",    // light blue
-    extra: "#2ecc71",      // green
-    down: "#e74c3c",       // red
-    forward: "#00ff88",    // highlight forward
-    back: "#ffdd33",       // highlight back
-    selected: "#ffffff",   // clicked node
-    faded: "rgba(100,100,100,0.15)"
-  };
+    let Graph, nodes=[], links=[], selectedNode=null;
 
-  // --- Probability distribution ---
-  const PROBS = [
-    { type: "root", pct: 0.30, extras: 0 },
-    { type: "primary", pct: 0.36, extras: 0 },
-    { type: "extra", pct: 0.22, extras: 1 },
-    { type: "extra2", pct: 0.09, extras: 2 },
-    { type: "extra3", pct: 0.026, extras: 3 },
-    { type: "extra4", pct: 0.004, extras: 4 }
-  ];
-
-  // --- Build universe ---
-  function generateUniverse(total = 1000) {
-    nodes = [];
-    links = [];
-    let id = 0;
-
-    const pickCategory = () => {
-      const r = Math.random();
-      let sum = 0;
-      for (const p of PROBS) {
-        sum += p.pct;
-        if (r <= sum) return p;
+    // Pick random donation based on probabilities
+    function randomDonation() {
+      let r=Math.random(), cum=0;
+      for (let i=0; i<DONATION_AMOUNTS.length; i++) {
+        cum+=DONATION_PROBS[i];
+        if (r<=cum) return DONATION_AMOUNTS[i];
       }
-      return PROBS[0]; // fallback
-    };
+      return 50;
+    }
 
-    for (let i = 0; i < total; i++) {
-      const cat = pickCategory();
-      const rootId = id++;
-      nodes.push({ id: rootId, type: "root" });
+    // Generate donors
+    function generateUniverse() {
+      let id=0;
+      function addNode(type,parentId=null) {
+        const node={ id:id++, type, donation:randomDonation(), highlight:null };
+        nodes.push(node);
+        if (parentId!==null) links.push({source:parentId, target:node.id, highlight:null});
+        return node.id;
+      }
 
-      if (cat.type === "root") continue;
+      for (let s=0;s<SEED_DONORS;s++) {
+        const root=addNode("root");
+        const primary=addNode("primary",root);
 
-      const primaryId = id++;
-      nodes.push({ id: primaryId, type: "primary" });
-      links.push({ source: rootId, target: primaryId });
-
-      if (cat.extras > 0) {
-        for (let e = 0; e < cat.extras; e++) {
-          const extraId = id++;
-          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down" });
-          links.push({ source: primaryId, target: extraId });
-
-          // Add a short red chain under each extra
-          let parent = extraId;
-          const chainLen = Math.floor(Math.random() * 3) + 1;
-          for (let d = 0; d < chainLen; d++) {
-            const downId = id++;
-            nodes.push({ id: downId, type: "down" });
-            links.push({ source: parent, target: downId });
-            parent = downId;
+        // Example: ~30% stop at primary, ~70% spawn extras
+        if (Math.random()<0.7) {
+          const extras=1+Math.floor(Math.random()*3);
+          for (let e=0;e<extras;e++) {
+            const extra=addNode("extra",primary);
+            if (Math.random()<0.5) addNode("down",extra);
           }
         }
       }
     }
-    return { nodes, links };
-  }
 
-  // --- Highlight logic ---
-  function clearHighlights() {
-    highlightNodes.clear();
-    highlightLinks.clear();
-    selectedNode = null;
-  }
+    // --- Highlight logic ---
+    function clearHighlights() {
+      nodes.forEach(n=>n.highlight=null);
+      links.forEach(l=>l.highlight=null);
+    }
 
-  function highlightPath(node) {
-    clearHighlights();
-    selectedNode = node;
+    function highlightPath(node) {
+      clearHighlights();
+      node.highlight="selected";
 
-    // Downline
-    const visitDown = (id) => {
-      highlightNodes.add(id);
-      links.forEach(l => {
-        if (l.source.id === id) {
-          highlightLinks.add(l);
-          visitDown(l.target.id);
-        }
-      });
-    };
+      let forwardTotal=0, forwardDonors=0;
 
-    // Upline
-    const visitUp = (id) => {
-      links.forEach(l => {
-        if (l.target.id === id) {
-          highlightLinks.add(l);
-          highlightNodes.add(l.source.id);
-          visitUp(l.source.id);
-        }
-      });
-    };
+      // forward
+      function dfsDown(id) {
+        const n=nodes.find(nn=>nn.id===id);
+        if (!n) return;
+        if (n.highlight==="forward"||n.highlight==="selected") return;
+        n.highlight="forward";
+        forwardTotal+=n.donation; forwardDonors++;
+        links.forEach(l=>{
+          if (l.source.id===id) {
+            l.highlight="forward";
+            dfsDown(l.target.id);
+          }
+        });
+      }
+      dfsDown(node.id);
 
-    visitDown(node.id);
-    visitUp(node.id);
+      // back
+      function dfsUp(id) {
+        links.forEach(l=>{
+          if (l.target.id===id) {
+            l.highlight="back";
+            const parent=nodes.find(nn=>nn.id===l.source.id);
+            if (parent && parent.highlight!=="back") {
+              parent.highlight="back";
+              dfsUp(parent.id);
+            }
+          }
+        });
+      }
+      dfsUp(node.id);
 
-    Graph.refresh();
-  }
+      // show status with totals
+      const totalRaised=(forwardTotal+node.donation).toLocaleString();
+      document.getElementById("status").textContent=
+        `Selected donor #${node.id} → Chain donors: ${forwardDonors+1}, Total $ raised: $${totalRaised}`;
 
-  // --- Draw graph ---
-  function draw({ nodes, links }) {
-    Graph = ForceGraph3D()(container)
+      Graph.graphData({nodes,links});
+    }
+
+    // --- Build graph ---
+    generateUniverse();
+
+    Graph=ForceGraph3D()(document.getElementById("graph"))
+      .graphData({nodes,links})
       .backgroundColor("#000")
-      .graphData({ nodes, links })
-      .nodeLabel(n => `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})`)
-      .nodeVal(() => nodeSize)
-      .nodeColor(n => {
-        if (selectedNode) {
-          if (highlightNodes.has(n.id)) {
-            if (n.id === selectedNode.id) return COLORS.selected;
-            return COLORS[n.type] || "#aaa";
-          }
-          return COLORS.faded;
-        }
-        return COLORS[n.type] || "#aaa";
+      .nodeLabel(n=>`${n.type} #${n.id}<br/>Donation: $${n.donation}`)
+      .nodeColor(n=>{
+        if(n.highlight==="selected") return "#ffffff";
+        if(n.highlight==="forward") return "#00ff88";
+        if(n.highlight==="back") return "#ffdd33";
+        if(n.type==="root") return "#1f4aa8";
+        if(n.type==="primary") return "#7cc3ff";
+        if(n.type==="extra") return "#2ecc71";
+        if(n.type==="down") return "#e74c3c";
+        return "#999";
       })
-      .linkColor(l => {
-        if (selectedNode) {
-          return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
-        }
-        return "rgba(180,180,180,0.3)";
+      .nodeVal(n=>n.type==="root"?10:n.type==="primary"?8:n.type==="extra"?6:5)
+      .linkColor(l=>{
+        if(l.highlight==="forward") return "#00ff88";
+        if(l.highlight==="back") return "#ffdd33";
+        return "rgba(255,255,255,0.1)";
       })
-      .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
-      .onNodeClick(highlightPath)
-      .d3Force("charge", d3.forceManyBody().strength(-40))
-      .d3Force("link", d3.forceLink().distance(40).strength(0.6));
+      .linkWidth(l=>(l.highlight?2:0.3))
+      .onNodeClick(node=>{
+        selectedNode=node;
+        highlightPath(node);
+      });
 
-    if (statusEl) {
-      statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    }
-  }
+    // ESC to clear
+    window.addEventListener("keydown",ev=>{
+      if(ev.key==="Escape"){
+        clearHighlights();
+        document.getElementById("status").textContent=
+          `Ready — ${nodes.length} donors, ${links.length} referrals.`;
+        Graph.graphData({nodes,links});
+        selectedNode=null;
+      }
+    });
 
-  // --- Slider control ---
-  const slider = document.createElement("input");
-  slider.type = "range";
-  slider.min = 2;
-  slider.max = 12;
-  slider.value = nodeSize;
-  slider.style.position = "absolute";
-  slider.style.left = "20px";
-  slider.style.bottom = "20px";
-  slider.oninput = e => {
-    nodeSize = +e.target.value;
-    Graph.nodeVal(() => nodeSize);
-    Graph.refresh();
-  };
-  document.body.appendChild(slider);
-
-  // --- Legend ---
-  const legend = document.createElement("div");
-  legend.style.position = "absolute";
-  legend.style.top = "10px";
-  legend.style.right = "10px";
-  legend.style.background = "rgba(0,0,0,0.7)";
-  legend.style.color = "#fff";
-  legend.style.padding = "10px";
-  legend.style.borderRadius = "6px";
-  legend.innerHTML = `
-    <b>Legend</b><br>
-    <span style="color:${COLORS.root}">●</span> Root (no referrals)<br>
-    <span style="color:${COLORS.primary}">●</span> Primary<br>
-    <span style="color:${COLORS.extra}">●</span> Extra<br>
-    <span style="color:${COLORS.down}">●</span> Downline<br>
-    <span style="color:${COLORS.forward}">●</span> Forward path<br>
-    <span style="color:${COLORS.back}">●</span> Backtrace<br>
-  `;
-  document.body.appendChild(legend);
-
-  // --- Run ---
-  const data = generateUniverse(1000);
-  draw(data);
-})();
+    document.getElementById("status").textContent=
+      `Ready — ${nodes.length} donors, ${links.length} referrals.`;
+  </script>
+</body>
+</html>
