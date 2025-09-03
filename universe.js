@@ -24,7 +24,7 @@
 </head>
 <body>
   <div id="graph"></div>
-  <div id="status">Loading...</div>
+  <div id="status">Loading…</div>
   <div class="hud legend">
     <div><span class="dot" style="background:#1f4aa8"></span>Root (no referrals)</div>
     <div><span class="dot" style="background:#7cc3ff"></span>Primary</div>
@@ -40,7 +40,7 @@
     const SEED_DONORS = 250;
     const TOTAL_DONORS = 1000;
     const DONATION_AMOUNTS = [50, 100, 250, 500, 1000, 5000];
-    const DONATION_PROBS = [0.7, 0.2, 0.05, 0.04, 0.006, 0.004]; // must sum to 1
+    const DONATION_PROBS = [0.7, 0.2, 0.05, 0.04, 0.006, 0.004]; // must sum ~1
 
     let Graph, nodes=[], links=[], selectedNode=null;
 
@@ -89,19 +89,20 @@
       clearHighlights();
       node.highlight="selected";
 
-      let forwardTotal=0, forwardDonors=0;
+      let forwardTotal=node.donation, forwardDonors=1;
 
       // forward
       function dfsDown(id) {
-        const n=nodes.find(nn=>nn.id===id);
-        if (!n) return;
-        if (n.highlight==="forward"||n.highlight==="selected") return;
-        n.highlight="forward";
-        forwardTotal+=n.donation; forwardDonors++;
         links.forEach(l=>{
           if (l.source.id===id) {
-            l.highlight="forward";
-            dfsDown(l.target.id);
+            const child=nodes.find(nn=>nn.id===l.target.id);
+            if(child && child.highlight!=="forward"){
+              child.highlight="forward";
+              l.highlight="forward";
+              forwardTotal+=child.donation;
+              forwardDonors++;
+              dfsDown(child.id);
+            }
           }
         });
       }
@@ -123,9 +124,8 @@
       dfsUp(node.id);
 
       // show status with totals
-      const totalRaised=(forwardTotal+node.donation).toLocaleString();
       document.getElementById("status").textContent=
-        `Selected donor #${node.id} → Chain donors: ${forwardDonors+1}, Total $ raised: $${totalRaised}`;
+        `Selected donor #${node.id} → Chain donors: ${forwardDonors}, Total $ raised: $${forwardTotal.toLocaleString()}`;
 
       Graph.graphData({nodes,links});
     }
@@ -145,7 +145,7 @@
         if(n.type==="primary") return "#7cc3ff";
         if(n.type==="extra") return "#2ecc71";
         if(n.type==="down") return "#e74c3c";
-        return "#999";
+        return "#666";
       })
       .nodeVal(n=>n.type==="root"?10:n.type==="primary"?8:n.type==="extra"?6:5)
       .linkColor(l=>{
@@ -170,6 +170,7 @@
       }
     });
 
+    // Set ready message
     document.getElementById("status").textContent=
       `Ready — ${nodes.length} donors, ${links.length} referrals.`;
   </script>
