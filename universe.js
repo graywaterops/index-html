@@ -19,79 +19,47 @@
     faded: "rgba(100,100,100,0.15)"
   };
 
-  // --- Probability distribution ---
-  const PROBS = [
-    { type: "root", pct: 0.30, extras: 0 },
-    { type: "primary", pct: 0.36, extras: 0 },
-    { type: "extra", pct: 0.22, extras: 1 },
-    { type: "extra2", pct: 0.09, extras: 2 },
-    { type: "extra3", pct: 0.026, extras: 3 },
-    { type: "extra4", pct: 0.004, extras: 4 }
-  ];
+  // --- Node builder ---
+  function addNode(type, parent = null) {
+    const node = { id: nodes.length, type, children: 0 };
+    nodes.push(node);
+    if (parent !== null) {
+      links.push({ source: parent.id, target: node.id });
+      parent.children++;
+    }
+    return node;
+  }
 
-  // --- Build universe with branching ---
+  // --- Universe generator ---
   function generateUniverse(total = 1000) {
     nodes = [];
     links = [];
-    let id = 0;
 
-    const pickCategory = () => {
-      const r = Math.random();
-      let sum = 0;
-      for (const p of PROBS) {
-        sum += p.pct;
-        if (r <= sum) return p;
-      }
-      return PROBS[0];
-    };
+    for (let i = 0; i < total; i++) {
+      const root = addNode("root");
 
-    const makeDonor = (parentId, depth = 0) => {
-      if (nodes.length >= total) return null;
+      // Each root can have exactly one primary
+      if (Math.random() < 0.7) {
+        const primary = addNode("primary", root);
 
-      const donorId = id++;
-      const donor = { id: donorId, type: depth === 0 ? "root" : "primary" };
-      nodes.push(donor);
+        // Decide how many referrals this primary makes
+        const referralCount = Math.floor(Math.random() * 5); // 0–4
+        for (let r = 0; r < referralCount; r++) {
+          if (r === 0) {
+            // First referral from light blue is also light blue
+            addNode("primary", primary);
+          } else {
+            // Additional referrals are green
+            const extra = addNode("extra", primary);
 
-      if (parentId !== null) {
-        links.push({ source: parentId, target: donorId });
-      }
-
-      // Pick category for this donor
-      const cat = pickCategory();
-
-      // Add extras/downlines under this donor
-      if (cat.extras > 0) {
-        for (let e = 0; e < cat.extras; e++) {
-          const extraId = id++;
-          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down" });
-          links.push({ source: donorId, target: extraId });
-
-          // Each extra gets a short red chain
-          let parent = extraId;
-          const chainLen = Math.floor(Math.random() * 3) + 1;
-          for (let d = 0; d < chainLen; d++) {
-            const downId = id++;
-            nodes.push({ id: downId, type: "down" });
-            links.push({ source: parent, target: downId });
-            parent = downId;
+            // Green children spawn red downline
+            const downCount = Math.floor(Math.random() * 3); // 0–2
+            for (let d = 0; d < downCount; d++) {
+              addNode("down", extra);
+            }
           }
         }
       }
-
-      // Random branching (primaries making more primaries)
-      if (Math.random() < 0.4 && depth < 3) { // 40% chance, up to depth 3
-        const numChildren = Math.floor(Math.random() * 3) + 1; // 1–3 children
-        for (let c = 0; c < numChildren; c++) {
-          makeDonor(donorId, depth + 1);
-        }
-      }
-
-      return donorId;
-    };
-
-    // Start with ~250 seeds
-    for (let i = 0; i < 250 && nodes.length < total; i++) {
-      makeDonor(null, 0);
     }
 
     return { nodes, links };
