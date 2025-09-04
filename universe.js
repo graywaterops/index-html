@@ -13,31 +13,30 @@
     primary: "#7cc3ff",    // light blue
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
+    inactive: "#ffff00",   // yellow
     forward: "#00ff88",    // highlight forward
     back: "#ffdd33",       // highlight back
     selected: "#ffffff",   // clicked node
     faded: "rgba(100,100,100,0.15)"
   };
 
-  // --- Probability distribution for referrals ---
-  const REFERRAL_DIST = [
-    { k: 0, p: 0.30 },  // 30% no referrals
-    { k: 1, p: 0.36 },  // 36% find 1
-    { k: 2, p: 0.22 },  // 22% find 2
-    { k: 3, p: 0.09 },  // 9% find 3
-    { k: 4, p: 0.026 }, // 2.6% find 4
-    { k: 5, p: 0.004 }  // 0.4% find 5
-  ];
-
-  function sampleReferrals() {
+  // --- Weighted random donation ---
+  function randomDonation() {
     const r = Math.random();
-    let sum = 0;
-    for (const dist of REFERRAL_DIST) {
-      sum += dist.p;
-      if (r <= sum) return dist.k;
-    }
-    return 0;
+    if (r < 0.80) return 50 + Math.floor(Math.random() * 51);          // 80% $50–100
+    if (r < 0.95) return 101 + Math.floor(Math.random() * 899);        // 15% $101–999
+    return 1000 + Math.floor(Math.random() * 4001);                    // 5% $1000–5000
   }
+
+  // --- Probability categories ---
+  const PROBS = [
+    { type: "root", pct: 0.30, extras: 0 },
+    { type: "primary", pct: 0.36, extras: 0 },
+    { type: "extra", pct: 0.22, extras: 1 },
+    { type: "extra2", pct: 0.09, extras: 2 },
+    { type: "extra3", pct: 0.026, extras: 3 },
+    { type: "extra4", pct: 0.004, extras: 4 }
+  ];
 
   // --- Build universe ---
   function generateUniverse(total = 1000) {
@@ -45,47 +44,86 @@
     links = [];
     let id = 0;
 
-    function addNode(type, parent = null) {
-      const node = { id: id++, type };
-      nodes.push(node);
-      if (parent !== null) {
-        links.push({ source: parent.id, target: node.id });
+    const pickCategory = () => {
+      const r = Math.random();
+      let sum = 0;
+      for (const p of PROBS) {
+        sum += p.pct;
+        if (r <= sum) return p;
       }
-      return node;
+      return PROBS[0]; // fallback
+    };
+
+    // Bias placement into a spherical ball
+    function randomSphere(radius = 200) {
+      const u = Math.random();
+      const v = Math.random();
+      const theta = 2 * Math.PI * u;
+      const phi = Math.acos(2 * v - 1);
+      const r = radius * Math.cbrt(Math.random());
+      return {
+        x: r * Math.sin(phi) * Math.cos(theta),
+        y: r * Math.sin(phi) * Math.sin(theta),
+        z: r * Math.cos(phi)
+      };
     }
 
-    function grow(parent, parentType) {
-      const num = sampleReferrals();
-      if (num === 0) return;
-
-      // First referral is always primary (light blue), unless parent is "extra" or "down"
-      let mainChild;
-      if (parentType === "extra" || parentType === "down") {
-        // under extras, everything is red
-        mainChild = addNode("down", parent);
-        grow(mainChild, "down");
-      } else {
-        // true bloodline continues as primary
-        mainChild = addNode("primary", parent);
-        grow(mainChild, "primary");
-      }
-
-      // Additional referrals are extras (green), their descendants are all red
-      for (let i = 1; i < num; i++) {
-        const extraChild = addNode("extra", parent);
-        // anything under extra is forced downline (red)
-        const downChild = addNode("down", extraChild);
-        grow(downChild, "down");
-      }
-    }
-
-    // Generate seed roots
     for (let i = 0; i < total; i++) {
-      const root = addNode("root");
-      grow(root, "root");
-    }
+      const cat = pickCategory();
+      const rootId = id++;
+      const donation = randomDonation();
+      const pos = randomSphere();
 
+      nodes.push({ id: rootId, type: "root", donation, ...pos });
+
+      // Inactive donors (no referrals)
+      if (cat.type === "root" && Math.random() < 0.5) {
+        nodes[rootId].type = "inactive";
+        continue;
+      }
+
+      const primaryId = id++;
+      nodes.push({ id: primaryId, type: "primary", donation: randomDonation(), ...randomSphere() });
+      links.push({ source: rootId, target: primaryId });
+
+      if (cat.extras > 0) {
+        for (let e = 0; e < cat.extras; e++) {
+          const extraId = id++;
+          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down", donation: randomDonation(), ...randomSphere() });
+          links.push({ source: primaryId, target: extraId });
+
+          // Red downline chain
+          let parent = extraId;
+          const chainLen = Math.floor(Math.random() * 3) + 1;
+          for (let d = 0; d < chainLen; d++) {
+            const downId = id++;
+            nodes.push({ id: downId, type: "down", donation: randomDonation(), ...randomSphere() });
+            links.push({ source: parent, target: downId });
+            parent = downId;
+          }
+        }
+      }
+    }
     return { nodes, links };
+  }
+
+  // --- Chain total calculator ---
+  function chainTotal(rootId) {
+    const visited = new Set();
+    let total = 0;
+
+    const dfs = (id) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const node = nodes.find(n => n.id === id);
+      if (node) total += node.donation;
+      links.forEach(l => {
+        if (l.source.id === id || l.source === id) dfs(l.target.id || l.target);
+      });
+    };
+
+    dfs(rootId);
+    return total;
   }
 
   // --- Highlight logic ---
@@ -94,10 +132,7 @@
     highlightLinks.clear();
     selectedNode = null;
     Graph.refresh();
-    if (statusEl) {
-      statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    }
+    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
   }
 
   function highlightPath(node) {
@@ -107,26 +142,25 @@
     const visitDown = (id) => {
       highlightNodes.add(id);
       links.forEach(l => {
-        if (l.source.id === id) {
+        if ((l.source.id || l.source) === id) {
           highlightLinks.add(l);
-          visitDown(l.target.id);
+          visitDown(l.target.id || l.target);
         }
       });
     };
 
     const visitUp = (id) => {
       links.forEach(l => {
-        if (l.target.id === id) {
+        if ((l.target.id || l.target) === id) {
           highlightLinks.add(l);
-          highlightNodes.add(l.source.id);
-          visitUp(l.source.id);
+          highlightNodes.add(l.source.id || l.source);
+          visitUp(l.source.id || l.source);
         }
       });
     };
 
     visitDown(node.id);
     visitUp(node.id);
-
     Graph.refresh();
   }
 
@@ -135,7 +169,13 @@
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({ nodes, links })
-      .nodeLabel(n => `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})`)
+      .nodeLabel(n => {
+        const referrals = links.filter(l => (l.source.id || l.source) === n.id).length;
+        if (n.type === "root") {
+          return `<strong>ROOT</strong> (ID ${n.id})<br/>Donation: $${n.donation}<br/>Chain Total: $${chainTotal(n.id)}<br/>Direct Referrals: ${referrals}`;
+        }
+        return `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})<br/>Donation: $${n.donation}<br/>Direct Referrals: ${referrals}`;
+      })
       .nodeVal(() => nodeSize)
       .nodeColor(n => {
         if (selectedNode) {
@@ -147,30 +187,16 @@
         }
         return COLORS[n.type] || "#aaa";
       })
-      .linkColor(l => {
-        if (selectedNode) {
-          return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
-        }
-        return "rgba(180,180,180,0.3)";
-      })
+      .linkColor(l => selectedNode ? (highlightLinks.has(l) ? COLORS.forward : COLORS.faded) : "rgba(180,180,180,0.3)")
       .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
       .onNodeClick(highlightPath)
-      .d3Force("charge", d3.forceManyBody().strength(-50))
-      .d3Force("link", d3.forceLink().distance(60).strength(0.7))
-      .d3Force("center", d3.forceCenter(0, 0, 0));
+      .d3Force("charge", d3.forceManyBody().strength(-30))
+      .d3Force("link", d3.forceLink().distance(40).strength(0.6));
 
-    if (statusEl) {
-      statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    }
-
-    // ESC clears selection
-    window.addEventListener("keydown", e => {
-      if (e.key === "Escape") clearHighlights();
-    });
+    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
   }
 
-  // --- Slider control ---
+  // --- Slider ---
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = 2;
@@ -197,14 +223,20 @@
   legend.style.borderRadius = "6px";
   legend.innerHTML = `
     <b>Legend</b><br>
-    <span style="color:${COLORS.root}">●</span> Root (no referrals)<br>
+    <span style="color:${COLORS.root}">●</span> Root<br>
     <span style="color:${COLORS.primary}">●</span> Primary<br>
     <span style="color:${COLORS.extra}">●</span> Extra<br>
     <span style="color:${COLORS.down}">●</span> Downline<br>
+    <span style="color:${COLORS.inactive}">●</span> Inactive<br>
     <span style="color:${COLORS.forward}">●</span> Forward path<br>
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
+
+  // --- ESC clears ---
+  window.addEventListener("keydown", e => {
+    if (e.key === "Escape") clearHighlights();
+  });
 
   // --- Run ---
   const data = generateUniverse(1000);
