@@ -7,110 +7,79 @@
   let highlightNodes = new Set(), highlightLinks = new Set();
   let selectedNode = null;
   let nodeSize = 4;
-  let spreadStrength = -40; // default spread
+  let universeSpread = 60; // starting spread
 
   const COLORS = {
     root: "#1f4aa8",       // dark blue
     primary: "#7cc3ff",    // light blue
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
-    inactive: "#ffff00",   // yellow
+    inactive: "#ffdd00",   // yellow
     forward: "#00ff88",    // highlight forward
     back: "#ffdd33",       // highlight back
     selected: "#ffffff",   // clicked node
-    faded: "rgba(100,100,100,0.15)"
+    faded: "rgba(100,100,100,0.1)"
   };
 
-  // --- Donation generator (log-normal skewed) ---
-  function generateDonation() {
-    // log-normal distribution: many ~50-100, few ~500-1000, rare up to ~5000
-    const mean = Math.log(80);  // center around $80
-    const sigma = 0.8;          // skew
-    let donation = Math.exp(mean + sigma * (Math.random() * 2 - 1));
-    donation = Math.max(50, Math.min(donation, 5000));
-    return Math.round(donation);
+  // --- Donation generator
+  function randomDonation() {
+    const r = Math.random();
+    if (r < 0.75) return Math.floor(50 + Math.random() * 50);   // 75% between $50-$100
+    if (r < 0.95) return Math.floor(100 + Math.random() * 400); // 20% between $100-$500
+    return Math.floor(500 + Math.random() * 4500);              // 5% between $500-$5000
   }
 
-  // --- Probability distribution ---
-  const PROBS = [
-    { type: "root", pct: 0.30, extras: 0 },
-    { type: "primary", pct: 0.36, extras: 0 },
-    { type: "extra", pct: 0.22, extras: 1 },
-    { type: "extra2", pct: 0.09, extras: 2 },
-    { type: "extra3", pct: 0.026, extras: 3 },
-    { type: "extra4", pct: 0.004, extras: 4 }
-  ];
-
-  // --- Build universe ---
-  function generateUniverse(total = 1000) {
+  // --- Universe builder
+  function generateUniverse(total = 1000, seedRoots = 250) {
     nodes = [];
     links = [];
     let id = 0;
 
-    const pickCategory = () => {
-      const r = Math.random();
-      let sum = 0;
-      for (const p of PROBS) {
-        sum += p.pct;
-        if (r <= sum) return p;
-      }
-      return PROBS[0];
-    };
-
-    for (let i = 0; i < total; i++) {
-      const cat = pickCategory();
-      const rootId = id++;
-      nodes.push({ id: rootId, type: "root", donation: generateDonation() });
-
-      if (cat.type === "root") {
-        // root with no referrals = inactive
-        nodes[rootId].type = "inactive";
-        continue;
-      }
-
-      const primaryId = id++;
-      nodes.push({ id: primaryId, type: "primary", donation: generateDonation() });
-      links.push({ source: rootId, target: primaryId });
-
-      if (cat.extras > 0) {
-        for (let e = 0; e < cat.extras; e++) {
-          const extraId = id++;
-          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down", donation: generateDonation() });
-          links.push({ source: primaryId, target: extraId });
-
-          // Short red chain under each extra
-          let parent = extraId;
-          const chainLen = Math.floor(Math.random() * 3) + 1;
-          for (let d = 0; d < chainLen; d++) {
-            const downId = id++;
-            nodes.push({ id: downId, type: "down", donation: generateDonation() });
-            links.push({ source: parent, target: downId });
-            parent = downId;
-          }
-        }
-      }
+    // Create initial roots
+    for (let i = 0; i < seedRoots; i++) {
+      nodes.push({ id: id++, type: "root", donation: randomDonation(), children: [] });
     }
+
+    // Build rest of the donors
+    for (let i = seedRoots; i < total; i++) {
+      const parent = nodes[Math.floor(Math.random() * nodes.length)];
+      const donation = randomDonation();
+
+      // Assign type: first referral = primary, second+ = extra, under extra = downline
+      let type = "primary";
+      if (parent.children.length > 0) type = parent.type === "primary" ? "extra" : "down";
+
+      const child = { id: id++, type, donation, children: [] };
+      nodes.push(child);
+      parent.children.push(child.id);
+      links.push({ source: parent.id, target: child.id });
+    }
+
+    // Mark inactive nodes (no children)
+    nodes.forEach(n => {
+      if (n.children.length === 0) n.type = "inactive";
+    });
+
     return { nodes, links };
   }
 
-  // --- Compute bloodline total ---
-  function computeBloodlineTotal(rootId) {
+  // --- Bloodline total calculation
+  function getBloodlineTotal(rootId) {
     let total = 0;
     const visited = new Set();
     function dfs(id) {
       if (visited.has(id)) return;
       visited.add(id);
       const node = nodes.find(n => n.id === id);
-      if (node) total += node.donation || 0;
-      links.forEach(l => {
-        if (l.source.id === id || l.source === id) dfs(l.target.id || l.target);
-      });
+      if (!node) return;
+      total += node.donation || 0;
+      node.children.forEach(dfs);
     }
     dfs(rootId);
     return total;
   }
 
-  // --- Highlight logic ---
+  // --- Highlight logic
   function clearHighlights() {
     highlightNodes.clear();
     highlightLinks.clear();
@@ -125,19 +94,19 @@
     const visitDown = (id) => {
       highlightNodes.add(id);
       links.forEach(l => {
-        if ((l.source.id || l.source) === id) {
+        if (l.source.id === id) {
           highlightLinks.add(l);
-          visitDown(l.target.id || l.target);
+          visitDown(l.target.id);
         }
       });
     };
 
     const visitUp = (id) => {
       links.forEach(l => {
-        if ((l.target.id || l.target) === id) {
+        if (l.target.id === id) {
           highlightLinks.add(l);
-          highlightNodes.add(l.source.id || l.source);
-          visitUp(l.source.id || l.source);
+          highlightNodes.add(l.source.id);
+          visitUp(l.source.id);
         }
       });
     };
@@ -147,17 +116,19 @@
     Graph.refresh();
   }
 
-  // --- Draw graph ---
+  // --- Draw graph
   function draw({ nodes, links }) {
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({ nodes, links })
       .nodeLabel(n => {
-        let base = `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})<br/>Donation: $${n.donation}`;
-        if (n.type === "root") {
-          base += `<br/>Bloodline total: $${computeBloodlineTotal(n.id)}`;
-        }
-        return base;
+        const total = n.type === "root" ? getBloodlineTotal(n.id) : null;
+        return `
+          <div>
+            <b>${n.type.toUpperCase()}</b><br/>
+            Donation: $${n.donation}<br/>
+            ${total ? `<b>Bloodline Total:</b> $${total}` : ""}
+          </div>`;
       })
       .nodeVal(() => nodeSize)
       .nodeColor(n => {
@@ -174,97 +145,87 @@
         if (selectedNode) {
           return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
         }
-        return "rgba(180,180,180,0.3)";
+        return "rgba(180,180,180,0.2)";
       })
-      .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
+      .linkWidth(l => (highlightLinks.has(l) ? 2.2 : 0.4))
       .onNodeClick(highlightPath)
-      .d3Force("charge", d3.forceManyBody().strength(spreadStrength))
-      .d3Force("link", d3.forceLink().distance(40).strength(0.6));
+      .d3Force("charge", d3.forceManyBody().strength(-universeSpread))
+      .d3Force("link", d3.forceLink().distance(universeSpread).strength(0.4))
+      .d3Force("center", d3.forceCenter(0, 0, 0));
 
     if (statusEl) {
       statusEl.textContent =
         `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     }
+
+    // ESC to reset
+    window.addEventListener("keydown", ev => {
+      if (ev.key === "Escape") clearHighlights();
+    });
   }
 
-  // --- Controls ---
-  function addControls() {
-    const panel = document.createElement("div");
-    panel.style.position = "absolute";
-    panel.style.left = "20px";
-    panel.style.bottom = "20px";
-    panel.style.background = "rgba(0,0,0,0.5)";
-    panel.style.color = "#fff";
-    panel.style.padding = "10px";
-    panel.style.borderRadius = "6px";
+  // --- Controls
+  const controls = document.createElement("div");
+  controls.style.position = "absolute";
+  controls.style.left = "20px";
+  controls.style.bottom = "20px";
+  controls.style.background = "rgba(0,0,0,0.6)";
+  controls.style.color = "#fff";
+  controls.style.padding = "10px";
+  controls.style.borderRadius = "8px";
 
-    // Node size
-    const nodeLabel = document.createElement("label");
-    nodeLabel.textContent = "Node Size:";
-    const nodeSlider = document.createElement("input");
-    nodeSlider.type = "range";
-    nodeSlider.min = 2;
-    nodeSlider.max = 12;
-    nodeSlider.value = nodeSize;
-    nodeSlider.oninput = e => {
-      nodeSize = +e.target.value;
-      Graph.nodeVal(() => nodeSize);
-      Graph.refresh();
-    };
+  // Node Size
+  const sliderNode = document.createElement("input");
+  sliderNode.type = "range";
+  sliderNode.min = 2;
+  sliderNode.max = 12;
+  sliderNode.value = nodeSize;
+  sliderNode.oninput = e => {
+    nodeSize = +e.target.value;
+    Graph.nodeVal(() => nodeSize);
+    Graph.refresh();
+  };
+  controls.append("Node Size:", sliderNode, document.createElement("br"));
 
-    // Universe spread
-    const spreadLabel = document.createElement("label");
-    spreadLabel.textContent = "Universe Spread:";
-    const spreadSlider = document.createElement("input");
-    spreadSlider.type = "range";
-    spreadSlider.min = -200;
-    spreadSlider.max = -10;
-    spreadSlider.value = spreadStrength;
-    spreadSlider.oninput = e => {
-      spreadStrength = +e.target.value;
-      Graph.d3Force("charge", d3.forceManyBody().strength(spreadStrength));
-      Graph.d3ReheatSimulation();
-    };
+  // Universe Spread
+  const sliderSpread = document.createElement("input");
+  sliderSpread.type = "range";
+  sliderSpread.min = 20;
+  sliderSpread.max = 120;
+  sliderSpread.value = universeSpread;
+  sliderSpread.oninput = e => {
+    universeSpread = +e.target.value;
+    Graph.d3Force("charge", d3.forceManyBody().strength(-universeSpread));
+    Graph.d3Force("link", d3.forceLink().distance(universeSpread).strength(0.4));
+    Graph.numDimensions(3); // keep globe-like
+    Graph.refresh();
+  };
+  controls.append("Universe Spread:", sliderSpread);
 
-    panel.appendChild(nodeLabel);
-    panel.appendChild(nodeSlider);
-    panel.appendChild(document.createElement("br"));
-    panel.appendChild(spreadLabel);
-    panel.appendChild(spreadSlider);
-    document.body.appendChild(panel);
-  }
+  document.body.appendChild(controls);
 
-  // --- Legend ---
-  function addLegend() {
-    const legend = document.createElement("div");
-    legend.style.position = "absolute";
-    legend.style.top = "10px";
-    legend.style.right = "10px";
-    legend.style.background = "rgba(0,0,0,0.7)";
-    legend.style.color = "#fff";
-    legend.style.padding = "10px";
-    legend.style.borderRadius = "6px";
-    legend.innerHTML = `
-      <b>Legend</b><br>
-      <span style="color:${COLORS.root}">●</span> Root<br>
-      <span style="color:${COLORS.primary}">●</span> Primary<br>
-      <span style="color:${COLORS.extra}">●</span> Extra<br>
-      <span style="color:${COLORS.down}">●</span> Downline<br>
-      <span style="color:${COLORS.inactive}">●</span> Inactive (new donor)<br>
-      <span style="color:${COLORS.forward}">●</span> Forward path<br>
-      <span style="color:${COLORS.back}">●</span> Backtrace<br>
-    `;
-    document.body.appendChild(legend);
-  }
+  // --- Legend
+  const legend = document.createElement("div");
+  legend.style.position = "absolute";
+  legend.style.top = "10px";
+  legend.style.right = "10px";
+  legend.style.background = "rgba(0,0,0,0.7)";
+  legend.style.color = "#fff";
+  legend.style.padding = "10px";
+  legend.style.borderRadius = "6px";
+  legend.innerHTML = `
+    <b>Legend</b><br>
+    <span style="color:${COLORS.root}">●</span> Root<br>
+    <span style="color:${COLORS.primary}">●</span> Primary<br>
+    <span style="color:${COLORS.extra}">●</span> Extra<br>
+    <span style="color:${COLORS.down}">●</span> Downline<br>
+    <span style="color:${COLORS.inactive}">●</span> Inactive (new donor)<br>
+    <span style="color:${COLORS.forward}">●</span> Forward path<br>
+    <span style="color:${COLORS.back}">●</span> Backtrace<br>
+  `;
+  document.body.appendChild(legend);
 
-  // --- ESC clear selection ---
-  window.addEventListener("keydown", ev => {
-    if (ev.key === "Escape") clearHighlights();
-  });
-
-  // --- Run ---
-  const data = generateUniverse(1000);
+  // --- Run
+  const data = generateUniverse(3200, 250);
   draw(data);
-  addControls();
-  addLegend();
 })();
