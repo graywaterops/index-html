@@ -13,50 +13,76 @@
     primary: "#7cc3ff",    // light blue
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
-    forward: "#00ff88",
-    back: "#ffdd33",
-    selected: "#ffffff",
+    forward: "#00ff88",    // highlight forward
+    back: "#ffdd33",       // highlight back
+    selected: "#ffffff",   // clicked node
     faded: "rgba(100,100,100,0.15)"
   };
 
-  // --- Build longer chains ---
+  // --- Probability distribution for referrals ---
+  const REFERRAL_DIST = [
+    { k: 0, p: 0.30 },  // 30% no referrals
+    { k: 1, p: 0.36 },  // 36% find 1
+    { k: 2, p: 0.22 },  // 22% find 2
+    { k: 3, p: 0.09 },  // 9% find 3
+    { k: 4, p: 0.026 }, // 2.6% find 4
+    { k: 5, p: 0.004 }  // 0.4% find 5
+  ];
+
+  function sampleReferrals() {
+    const r = Math.random();
+    let sum = 0;
+    for (const dist of REFERRAL_DIST) {
+      sum += dist.p;
+      if (r <= sum) return dist.k;
+    }
+    return 0;
+  }
+
+  // --- Build universe ---
   function generateUniverse(total = 1000) {
     nodes = [];
     links = [];
     let id = 0;
 
-    const addNode = (type, parentId = null) => {
+    function addNode(type, parent = null) {
       const node = { id: id++, type };
       nodes.push(node);
-      if (parentId !== null) {
-        links.push({ source: parentId, target: node.id });
+      if (parent !== null) {
+        links.push({ source: parent.id, target: node.id });
       }
-      return node.id;
-    };
+      return node;
+    }
 
-    // Recursive growth
-    const growChain = (parentId, depth = 0) => {
-      if (depth > 12) return; // prevent infinite growth
+    function grow(parent, parentType) {
+      const num = sampleReferrals();
+      if (num === 0) return;
 
-      const children = Math.floor(Math.random() * 3); // 0–2 children
-      for (let i = 0; i < children; i++) {
-        const type = depth === 0
-          ? (i === 0 ? "primary" : "extra")
-          : (depth === 1 && i > 0 ? "extra" : "down");
-
-        const childId = addNode(type, parentId);
-
-        // 50% chance to keep chain going deeper
-        if (Math.random() < 0.5) {
-          growChain(childId, depth + 1);
-        }
+      // First referral is always primary (light blue), unless parent is "extra" or "down"
+      let mainChild;
+      if (parentType === "extra" || parentType === "down") {
+        // under extras, everything is red
+        mainChild = addNode("down", parent);
+        grow(mainChild, "down");
+      } else {
+        // true bloodline continues as primary
+        mainChild = addNode("primary", parent);
+        grow(mainChild, "primary");
       }
-    };
 
-    // Seed roots
-    for (let i = 0; i < total / 2; i++) {
-      const rootId = addNode("root");
-      growChain(rootId, 0);
+      // Additional referrals are extras (green), their descendants are all red
+      for (let i = 1; i < num; i++) {
+        const extraChild = addNode("extra", parent);
+        // anything under extra is forced downline (red)
+        const downChild = addNode("down", extraChild);
+        grow(downChild, "down");
+      }
+    }
+
+    // Generate seed roots
+    for (let i = 0; i < total; i++) {
+      const root = addNode("root");
+      grow(root, "root");
     }
 
     return { nodes, links };
@@ -68,6 +94,10 @@
     highlightLinks.clear();
     selectedNode = null;
     Graph.refresh();
+    if (statusEl) {
+      statusEl.textContent =
+        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    }
   }
 
   function highlightPath(node) {
@@ -96,6 +126,7 @@
 
     visitDown(node.id);
     visitUp(node.id);
+
     Graph.refresh();
   }
 
@@ -124,14 +155,19 @@
       })
       .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
       .onNodeClick(highlightPath)
-      .d3Force("charge", d3.forceManyBody().strength(-60))
-      .d3Force("link", d3.forceLink().distance(40).strength(0.5))
-      .d3Force("radial", d3.forceRadial(200, 0, 0).strength(0.05)); // globe-like
+      .d3Force("charge", d3.forceManyBody().strength(-50))
+      .d3Force("link", d3.forceLink().distance(60).strength(0.7))
+      .d3Force("center", d3.forceCenter(0, 0, 0));
 
     if (statusEl) {
       statusEl.textContent =
         `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     }
+
+    // ESC clears selection
+    window.addEventListener("keydown", e => {
+      if (e.key === "Escape") clearHighlights();
+    });
   }
 
   // --- Slider control ---
@@ -161,7 +197,7 @@
   legend.style.borderRadius = "6px";
   legend.innerHTML = `
     <b>Legend</b><br>
-    <span style="color:${COLORS.root}">●</span> Root<br>
+    <span style="color:${COLORS.root}">●</span> Root (no referrals)<br>
     <span style="color:${COLORS.primary}">●</span> Primary<br>
     <span style="color:${COLORS.extra}">●</span> Extra<br>
     <span style="color:${COLORS.down}">●</span> Downline<br>
@@ -169,13 +205,6 @@
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
-
-  // --- ESC reset ---
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      clearHighlights();
-    }
-  });
 
   // --- Run ---
   const data = generateUniverse(1000);
