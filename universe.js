@@ -13,53 +13,50 @@
     primary: "#7cc3ff",    // light blue
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
-    forward: "#00ff88",    // highlight forward
-    back: "#ffdd33",       // highlight back
-    selected: "#ffffff",   // clicked node
+    forward: "#00ff88",
+    back: "#ffdd33",
+    selected: "#ffffff",
     faded: "rgba(100,100,100,0.15)"
   };
 
-  // --- Node builder ---
-  function addNode(type, parent = null) {
-    const node = { id: nodes.length, type, children: 0 };
-    nodes.push(node);
-    if (parent !== null) {
-      links.push({ source: parent.id, target: node.id });
-      parent.children++;
-    }
-    return node;
-  }
-
-  // --- Universe generator ---
+  // --- Build longer chains ---
   function generateUniverse(total = 1000) {
     nodes = [];
     links = [];
+    let id = 0;
 
-    for (let i = 0; i < total; i++) {
-      const root = addNode("root");
+    const addNode = (type, parentId = null) => {
+      const node = { id: id++, type };
+      nodes.push(node);
+      if (parentId !== null) {
+        links.push({ source: parentId, target: node.id });
+      }
+      return node.id;
+    };
 
-      // Each root can have exactly one primary
-      if (Math.random() < 0.7) {
-        const primary = addNode("primary", root);
+    // Recursive growth
+    const growChain = (parentId, depth = 0) => {
+      if (depth > 12) return; // prevent infinite growth
 
-        // Decide how many referrals this primary makes
-        const referralCount = Math.floor(Math.random() * 5); // 0–4
-        for (let r = 0; r < referralCount; r++) {
-          if (r === 0) {
-            // First referral from light blue is also light blue
-            addNode("primary", primary);
-          } else {
-            // Additional referrals are green
-            const extra = addNode("extra", primary);
+      const children = Math.floor(Math.random() * 3); // 0–2 children
+      for (let i = 0; i < children; i++) {
+        const type = depth === 0
+          ? (i === 0 ? "primary" : "extra")
+          : (depth === 1 && i > 0 ? "extra" : "down");
 
-            // Green children spawn red downline
-            const downCount = Math.floor(Math.random() * 3); // 0–2
-            for (let d = 0; d < downCount; d++) {
-              addNode("down", extra);
-            }
-          }
+        const childId = addNode(type, parentId);
+
+        // 50% chance to keep chain going deeper
+        if (Math.random() < 0.5) {
+          growChain(childId, depth + 1);
         }
       }
+    };
+
+    // Seed roots
+    for (let i = 0; i < total / 2; i++) {
+      const rootId = addNode("root");
+      growChain(rootId, 0);
     }
 
     return { nodes, links };
@@ -70,7 +67,7 @@
     highlightNodes.clear();
     highlightLinks.clear();
     selectedNode = null;
-    if (Graph) Graph.refresh();
+    Graph.refresh();
   }
 
   function highlightPath(node) {
@@ -99,7 +96,6 @@
 
     visitDown(node.id);
     visitUp(node.id);
-
     Graph.refresh();
   }
 
@@ -128,42 +124,31 @@
       })
       .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
       .onNodeClick(highlightPath)
-      // Forces: spherical layout, less flat
-      .d3Force("charge", d3.forceManyBody().strength(-80))
-      .d3Force("link", d3.forceLink().distance(40).strength(0.6))
-      .d3Force("center", d3.forceCenter(0, 0, 0))
-      .d3Force("z", d3.forceZ().strength(0.2)); // spread in z axis
+      .d3Force("charge", d3.forceManyBody().strength(-60))
+      .d3Force("link", d3.forceLink().distance(40).strength(0.5))
+      .d3Force("radial", d3.forceRadial(200, 0, 0).strength(0.05)); // globe-like
 
     if (statusEl) {
       statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node or press ESC to reset.`;
+        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     }
   }
 
   // --- Slider control ---
-  const controls = document.createElement("div");
-  controls.style.position = "absolute";
-  controls.style.left = "20px";
-  controls.style.bottom = "20px";
-  controls.style.background = "rgba(0,0,0,0.6)";
-  controls.style.color = "#fff";
-  controls.style.padding = "6px 10px";
-  controls.style.borderRadius = "6px";
-
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = 2;
   slider.max = 12;
   slider.value = nodeSize;
+  slider.style.position = "absolute";
+  slider.style.left = "20px";
+  slider.style.bottom = "20px";
   slider.oninput = e => {
     nodeSize = +e.target.value;
     Graph.nodeVal(() => nodeSize);
     Graph.refresh();
   };
-
-  controls.innerHTML = "Node Size: ";
-  controls.appendChild(slider);
-  document.body.appendChild(controls);
+  document.body.appendChild(slider);
 
   // --- Legend ---
   const legend = document.createElement("div");
@@ -176,7 +161,7 @@
   legend.style.borderRadius = "6px";
   legend.innerHTML = `
     <b>Legend</b><br>
-    <span style="color:${COLORS.root}">●</span> Root (no referrals)<br>
+    <span style="color:${COLORS.root}">●</span> Root<br>
     <span style="color:${COLORS.primary}">●</span> Primary<br>
     <span style="color:${COLORS.extra}">●</span> Extra<br>
     <span style="color:${COLORS.down}">●</span> Downline<br>
@@ -185,8 +170,8 @@
   `;
   document.body.appendChild(legend);
 
-  // --- ESC clears selection ---
-  window.addEventListener("keydown", e => {
+  // --- ESC reset ---
+  window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       clearHighlights();
     }
