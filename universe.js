@@ -70,6 +70,7 @@
     highlightNodes.clear();
     highlightLinks.clear();
     selectedNode = null;
+    if (Graph) Graph.refresh();
   }
 
   function highlightPath(node) {
@@ -127,30 +128,42 @@
       })
       .linkWidth(l => (highlightLinks.has(l) ? 2.5 : 0.4))
       .onNodeClick(highlightPath)
-      .d3Force("charge", d3.forceManyBody().strength(-40))
-      .d3Force("link", d3.forceLink().distance(40).strength(0.6));
+      // Forces: spherical layout, less flat
+      .d3Force("charge", d3.forceManyBody().strength(-80))
+      .d3Force("link", d3.forceLink().distance(40).strength(0.6))
+      .d3Force("center", d3.forceCenter(0, 0, 0))
+      .d3Force("z", d3.forceZ().strength(0.2)); // spread in z axis
 
     if (statusEl) {
       statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node or press ESC to reset.`;
     }
   }
 
   // --- Slider control ---
+  const controls = document.createElement("div");
+  controls.style.position = "absolute";
+  controls.style.left = "20px";
+  controls.style.bottom = "20px";
+  controls.style.background = "rgba(0,0,0,0.6)";
+  controls.style.color = "#fff";
+  controls.style.padding = "6px 10px";
+  controls.style.borderRadius = "6px";
+
   const slider = document.createElement("input");
   slider.type = "range";
   slider.min = 2;
   slider.max = 12;
   slider.value = nodeSize;
-  slider.style.position = "absolute";
-  slider.style.left = "20px";
-  slider.style.bottom = "20px";
   slider.oninput = e => {
     nodeSize = +e.target.value;
     Graph.nodeVal(() => nodeSize);
     Graph.refresh();
   };
-  document.body.appendChild(slider);
+
+  controls.innerHTML = "Node Size: ";
+  controls.appendChild(slider);
+  document.body.appendChild(controls);
 
   // --- Legend ---
   const legend = document.createElement("div");
@@ -171,6 +184,13 @@
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
+
+  // --- ESC clears selection ---
+  window.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      clearHighlights();
+    }
+  });
 
   // --- Run ---
   const data = generateUniverse(1000);
