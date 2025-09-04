@@ -7,19 +7,29 @@
   let highlightNodes = new Set(), highlightLinks = new Set();
   let selectedNode = null;
   let nodeSize = 4;
-  let spreadStrength = -40; // default universe repulsion
+  let spreadStrength = -40; // default spread
 
   const COLORS = {
     root: "#1f4aa8",       // dark blue
     primary: "#7cc3ff",    // light blue
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
-    inactive: "#cccc00",   // yellow - new donors w/ no referrals
+    inactive: "#ffff00",   // yellow
     forward: "#00ff88",    // highlight forward
     back: "#ffdd33",       // highlight back
     selected: "#ffffff",   // clicked node
     faded: "rgba(100,100,100,0.15)"
   };
+
+  // --- Donation generator (log-normal skewed) ---
+  function generateDonation() {
+    // log-normal distribution: many ~50-100, few ~500-1000, rare up to ~5000
+    const mean = Math.log(80);  // center around $80
+    const sigma = 0.8;          // skew
+    let donation = Math.exp(mean + sigma * (Math.random() * 2 - 1));
+    donation = Math.max(50, Math.min(donation, 5000));
+    return Math.round(donation);
+  }
 
   // --- Probability distribution ---
   const PROBS = [
@@ -44,32 +54,36 @@
         sum += p.pct;
         if (r <= sum) return p;
       }
-      return PROBS[0]; // fallback
+      return PROBS[0];
     };
 
     for (let i = 0; i < total; i++) {
       const cat = pickCategory();
       const rootId = id++;
-      nodes.push({ id: rootId, type: "root" });
+      nodes.push({ id: rootId, type: "root", donation: generateDonation() });
 
-      if (cat.type === "root") continue;
+      if (cat.type === "root") {
+        // root with no referrals = inactive
+        nodes[rootId].type = "inactive";
+        continue;
+      }
 
       const primaryId = id++;
-      nodes.push({ id: primaryId, type: "primary" });
+      nodes.push({ id: primaryId, type: "primary", donation: generateDonation() });
       links.push({ source: rootId, target: primaryId });
 
       if (cat.extras > 0) {
         for (let e = 0; e < cat.extras; e++) {
           const extraId = id++;
-          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down" });
+          nodes.push({ id: extraId, type: e === 0 ? "extra" : "down", donation: generateDonation() });
           links.push({ source: primaryId, target: extraId });
 
-          // Add a short red chain under each extra
+          // Short red chain under each extra
           let parent = extraId;
           const chainLen = Math.floor(Math.random() * 3) + 1;
           for (let d = 0; d < chainLen; d++) {
             const downId = id++;
-            nodes.push({ id: downId, type: "down" });
+            nodes.push({ id: downId, type: "down", donation: generateDonation() });
             links.push({ source: parent, target: downId });
             parent = downId;
           }
@@ -77,6 +91,23 @@
       }
     }
     return { nodes, links };
+  }
+
+  // --- Compute bloodline total ---
+  function computeBloodlineTotal(rootId) {
+    let total = 0;
+    const visited = new Set();
+    function dfs(id) {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const node = nodes.find(n => n.id === id);
+      if (node) total += node.donation || 0;
+      links.forEach(l => {
+        if (l.source.id === id || l.source === id) dfs(l.target.id || l.target);
+      });
+    }
+    dfs(rootId);
+    return total;
   }
 
   // --- Highlight logic ---
@@ -91,31 +122,28 @@
     clearHighlights();
     selectedNode = node;
 
-    // Downline
     const visitDown = (id) => {
       highlightNodes.add(id);
       links.forEach(l => {
-        if (l.source.id === id) {
+        if ((l.source.id || l.source) === id) {
           highlightLinks.add(l);
-          visitDown(l.target.id);
+          visitDown(l.target.id || l.target);
         }
       });
     };
 
-    // Upline
     const visitUp = (id) => {
       links.forEach(l => {
-        if (l.target.id === id) {
+        if ((l.target.id || l.target) === id) {
           highlightLinks.add(l);
-          highlightNodes.add(l.source.id);
-          visitUp(l.source.id);
+          highlightNodes.add(l.source.id || l.source);
+          visitUp(l.source.id || l.source);
         }
       });
     };
 
     visitDown(node.id);
     visitUp(node.id);
-
     Graph.refresh();
   }
 
@@ -124,7 +152,13 @@
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .graphData({ nodes, links })
-      .nodeLabel(n => `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})`)
+      .nodeLabel(n => {
+        let base = `<strong>${n.type.toUpperCase()}</strong> (ID ${n.id})<br/>Donation: $${n.donation}`;
+        if (n.type === "root") {
+          base += `<br/>Bloodline total: $${computeBloodlineTotal(n.id)}`;
+        }
+        return base;
+      })
       .nodeVal(() => nodeSize)
       .nodeColor(n => {
         if (selectedNode) {
@@ -153,82 +187,84 @@
     }
   }
 
-  // --- Controls panel ---
-  const controls = document.createElement("div");
-  controls.style.position = "absolute";
-  controls.style.left = "20px";
-  controls.style.bottom = "20px";
-  controls.style.background = "rgba(0,0,0,0.6)";
-  controls.style.color = "#fff";
-  controls.style.padding = "10px";
-  controls.style.borderRadius = "6px";
-  controls.style.display = "flex";
-  controls.style.flexDirection = "column";
-  controls.style.gap = "6px";
+  // --- Controls ---
+  function addControls() {
+    const panel = document.createElement("div");
+    panel.style.position = "absolute";
+    panel.style.left = "20px";
+    panel.style.bottom = "20px";
+    panel.style.background = "rgba(0,0,0,0.5)";
+    panel.style.color = "#fff";
+    panel.style.padding = "10px";
+    panel.style.borderRadius = "6px";
 
-  // Node Size Slider
-  const nodeSlider = document.createElement("input");
-  nodeSlider.type = "range";
-  nodeSlider.min = 2;
-  nodeSlider.max = 12;
-  nodeSlider.value = nodeSize;
-  nodeSlider.oninput = e => {
-    nodeSize = +e.target.value;
-    Graph.nodeVal(() => nodeSize);
-    Graph.refresh();
-  };
-  const nodeLabel = document.createElement("label");
-  nodeLabel.textContent = "Node Size:";
-  nodeLabel.style.fontSize = "12px";
-  nodeLabel.appendChild(nodeSlider);
-  controls.appendChild(nodeLabel);
+    // Node size
+    const nodeLabel = document.createElement("label");
+    nodeLabel.textContent = "Node Size:";
+    const nodeSlider = document.createElement("input");
+    nodeSlider.type = "range";
+    nodeSlider.min = 2;
+    nodeSlider.max = 12;
+    nodeSlider.value = nodeSize;
+    nodeSlider.oninput = e => {
+      nodeSize = +e.target.value;
+      Graph.nodeVal(() => nodeSize);
+      Graph.refresh();
+    };
 
-  // Spread Slider
-  const spreadSlider = document.createElement("input");
-  spreadSlider.type = "range";
-  spreadSlider.min = -150;
-  spreadSlider.max = -10;
-  spreadSlider.value = spreadStrength;
-  spreadSlider.oninput = e => {
-    spreadStrength = +e.target.value;
-    Graph.d3Force("charge", d3.forceManyBody().strength(spreadStrength));
-    Graph.refresh();
-  };
-  const spreadLabel = document.createElement("label");
-  spreadLabel.textContent = "Universe Spread:";
-  spreadLabel.style.fontSize = "12px";
-  spreadLabel.appendChild(spreadSlider);
-  controls.appendChild(spreadLabel);
+    // Universe spread
+    const spreadLabel = document.createElement("label");
+    spreadLabel.textContent = "Universe Spread:";
+    const spreadSlider = document.createElement("input");
+    spreadSlider.type = "range";
+    spreadSlider.min = -200;
+    spreadSlider.max = -10;
+    spreadSlider.value = spreadStrength;
+    spreadSlider.oninput = e => {
+      spreadStrength = +e.target.value;
+      Graph.d3Force("charge", d3.forceManyBody().strength(spreadStrength));
+      Graph.d3ReheatSimulation();
+    };
 
-  document.body.appendChild(controls);
+    panel.appendChild(nodeLabel);
+    panel.appendChild(nodeSlider);
+    panel.appendChild(document.createElement("br"));
+    panel.appendChild(spreadLabel);
+    panel.appendChild(spreadSlider);
+    document.body.appendChild(panel);
+  }
 
   // --- Legend ---
-  const legend = document.createElement("div");
-  legend.style.position = "absolute";
-  legend.style.top = "10px";
-  legend.style.right = "10px";
-  legend.style.background = "rgba(0,0,0,0.7)";
-  legend.style.color = "#fff";
-  legend.style.padding = "10px";
-  legend.style.borderRadius = "6px";
-  legend.innerHTML = `
-    <b>Legend</b><br>
-    <span style="color:${COLORS.root}">●</span> Root (no referrals)<br>
-    <span style="color:${COLORS.primary}">●</span> Primary<br>
-    <span style="color:${COLORS.extra}">●</span> Extra<br>
-    <span style="color:${COLORS.down}">●</span> Downline<br>
-    <span style="color:${COLORS.inactive}">●</span> Inactive (new donor)<br>
-    <span style="color:${COLORS.forward}">●</span> Forward path<br>
-    <span style="color:${COLORS.back}">●</span> Backtrace<br>
-  `;
-  document.body.appendChild(legend);
+  function addLegend() {
+    const legend = document.createElement("div");
+    legend.style.position = "absolute";
+    legend.style.top = "10px";
+    legend.style.right = "10px";
+    legend.style.background = "rgba(0,0,0,0.7)";
+    legend.style.color = "#fff";
+    legend.style.padding = "10px";
+    legend.style.borderRadius = "6px";
+    legend.innerHTML = `
+      <b>Legend</b><br>
+      <span style="color:${COLORS.root}">●</span> Root<br>
+      <span style="color:${COLORS.primary}">●</span> Primary<br>
+      <span style="color:${COLORS.extra}">●</span> Extra<br>
+      <span style="color:${COLORS.down}">●</span> Downline<br>
+      <span style="color:${COLORS.inactive}">●</span> Inactive (new donor)<br>
+      <span style="color:${COLORS.forward}">●</span> Forward path<br>
+      <span style="color:${COLORS.back}">●</span> Backtrace<br>
+    `;
+    document.body.appendChild(legend);
+  }
 
-  // --- ESC clears selection ---
-  window.addEventListener("keydown", e => {
-    if (e.key === "Escape") clearHighlights();
+  // --- ESC clear selection ---
+  window.addEventListener("keydown", ev => {
+    if (ev.key === "Escape") clearHighlights();
   });
 
   // --- Run ---
   const data = generateUniverse(1000);
   draw(data);
+  addControls();
+  addLegend();
 })();
