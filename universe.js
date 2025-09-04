@@ -38,6 +38,20 @@
     { type: "extra4", pct: 0.004, extras: 4 }
   ];
 
+  // --- Spherical placement (biased for inactive at edge) ---
+  function randomSphere(radius = 200, edgeBias = false) {
+    const u = Math.random();
+    const v = Math.random();
+    const theta = 2 * Math.PI * u;
+    const phi = Math.acos(2 * v - 1);
+    const r = edgeBias ? radius * (0.8 + 0.2 * Math.random()) : radius * Math.cbrt(Math.random());
+    return {
+      x: r * Math.sin(phi) * Math.cos(theta),
+      y: r * Math.sin(phi) * Math.sin(theta),
+      z: r * Math.cos(phi)
+    };
+  }
+
   // --- Build universe ---
   function generateUniverse(total = 1000) {
     nodes = [];
@@ -51,48 +65,38 @@
         sum += p.pct;
         if (r <= sum) return p;
       }
-      return PROBS[0]; // fallback
+      return PROBS[0];
     };
-
-    // Bias placement into a spherical ball
-    function randomSphere(radius = 200) {
-      const u = Math.random();
-      const v = Math.random();
-      const theta = 2 * Math.PI * u;
-      const phi = Math.acos(2 * v - 1);
-      const r = radius * Math.cbrt(Math.random());
-      return {
-        x: r * Math.sin(phi) * Math.cos(theta),
-        y: r * Math.sin(phi) * Math.sin(theta),
-        z: r * Math.cos(phi)
-      };
-    }
 
     for (let i = 0; i < total; i++) {
       const cat = pickCategory();
-      const rootId = id++;
       const donation = randomDonation();
-      const pos = randomSphere();
 
-      nodes.push({ id: rootId, type: "root", donation, ...pos });
+      // Root donor
+      const rootId = id++;
+      const rootPos = randomSphere(200, false);
+      nodes.push({ id: rootId, type: "root", donation, ...rootPos });
 
-      // Inactive donors (no referrals)
+      // Some roots remain inactive (placed near edge)
       if (cat.type === "root" && Math.random() < 0.5) {
         nodes[rootId].type = "inactive";
+        Object.assign(nodes[rootId], randomSphere(200, true));
         continue;
       }
 
+      // Primary (bloodline link)
       const primaryId = id++;
       nodes.push({ id: primaryId, type: "primary", donation: randomDonation(), ...randomSphere() });
       links.push({ source: rootId, target: primaryId });
 
+      // Extras under this donor
       if (cat.extras > 0) {
         for (let e = 0; e < cat.extras; e++) {
           const extraId = id++;
           nodes.push({ id: extraId, type: e === 0 ? "extra" : "down", donation: randomDonation(), ...randomSphere() });
           links.push({ source: primaryId, target: extraId });
 
-          // Red downline chain
+          // Red chain below each extra
           let parent = extraId;
           const chainLen = Math.floor(Math.random() * 3) + 1;
           for (let d = 0; d < chainLen; d++) {
@@ -118,7 +122,7 @@
       const node = nodes.find(n => n.id === id);
       if (node) total += node.donation;
       links.forEach(l => {
-        if (l.source.id === id || l.source === id) dfs(l.target.id || l.target);
+        if ((l.source.id || l.source) === id) dfs(l.target.id || l.target);
       });
     };
 
