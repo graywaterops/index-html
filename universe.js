@@ -29,7 +29,7 @@
     { type: "extra4", pct: 0.004, extras: 4 }
   ];
 
-  // --- Build universe ---
+  // --- Build universe with branching ---
   function generateUniverse(total = 1000) {
     nodes = [];
     links = [];
@@ -42,27 +42,31 @@
         sum += p.pct;
         if (r <= sum) return p;
       }
-      return PROBS[0]; // fallback
+      return PROBS[0];
     };
 
-    for (let i = 0; i < total; i++) {
+    const makeDonor = (parentId, depth = 0) => {
+      if (nodes.length >= total) return null;
+
+      const donorId = id++;
+      const donor = { id: donorId, type: depth === 0 ? "root" : "primary" };
+      nodes.push(donor);
+
+      if (parentId !== null) {
+        links.push({ source: parentId, target: donorId });
+      }
+
+      // Pick category for this donor
       const cat = pickCategory();
-      const rootId = id++;
-      nodes.push({ id: rootId, type: "root" });
 
-      if (cat.type === "root") continue;
-
-      const primaryId = id++;
-      nodes.push({ id: primaryId, type: "primary" });
-      links.push({ source: rootId, target: primaryId });
-
+      // Add extras/downlines under this donor
       if (cat.extras > 0) {
         for (let e = 0; e < cat.extras; e++) {
           const extraId = id++;
           nodes.push({ id: extraId, type: e === 0 ? "extra" : "down" });
-          links.push({ source: primaryId, target: extraId });
+          links.push({ source: donorId, target: extraId });
 
-          // Add a short red chain under each extra
+          // Each extra gets a short red chain
           let parent = extraId;
           const chainLen = Math.floor(Math.random() * 3) + 1;
           for (let d = 0; d < chainLen; d++) {
@@ -73,27 +77,24 @@
           }
         }
       }
+
+      // Random branching (primaries making more primaries)
+      if (Math.random() < 0.4 && depth < 3) { // 40% chance, up to depth 3
+        const numChildren = Math.floor(Math.random() * 3) + 1; // 1–3 children
+        for (let c = 0; c < numChildren; c++) {
+          makeDonor(donorId, depth + 1);
+        }
+      }
+
+      return donorId;
+    };
+
+    // Start with ~250 seeds
+    for (let i = 0; i < 250 && nodes.length < total; i++) {
+      makeDonor(null, 0);
     }
+
     return { nodes, links };
-  }
-
-  // --- Chain stats ---
-  function getChainStats(node) {
-    let visited = new Set();
-    let totalDonation = 0;
-
-    function dfs(id) {
-      if (visited.has(id)) return;
-      visited.add(id);
-      const n = nodes.find(nn => nn.id === id);
-      if (n) totalDonation += 50; // static $50/donor
-      links.forEach(l => {
-        if (l.source.id === id) dfs(l.target.id);
-      });
-    }
-
-    dfs(node.id);
-    return { count: visited.size, totalDonation };
   }
 
   // --- Highlight logic ---
@@ -107,7 +108,6 @@
     clearHighlights();
     selectedNode = node;
 
-    // Downline
     const visitDown = (id) => {
       highlightNodes.add(id);
       links.forEach(l => {
@@ -118,7 +118,6 @@
       });
     };
 
-    // Upline
     const visitUp = (id) => {
       links.forEach(l => {
         if (l.target.id === id) {
@@ -131,12 +130,6 @@
 
     visitDown(node.id);
     visitUp(node.id);
-
-    const { count, totalDonation } = getChainStats(node);
-    if (statusEl) {
-      statusEl.textContent =
-        `Selected node #${node.id} | Chain size: ${count} | Total: $${totalDonation}`;
-    }
 
     Graph.refresh();
   }
@@ -210,19 +203,6 @@
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
-
-  // --- ESC reset ---
-  document.addEventListener("keydown", ev => {
-    if (ev.key === "Escape") {
-      clearHighlights();
-      selectedNode = null;
-      if (statusEl) {
-        statusEl.textContent =
-          `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-      }
-      Graph.refresh();
-    }
-  });
 
   // --- Run ---
   const data = generateUniverse(1000);
