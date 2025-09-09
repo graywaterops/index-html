@@ -124,7 +124,6 @@
     const map={root:COLORS.root, primary:COLORS.primary, extra:COLORS.extra, down:COLORS.down};
     return new THREE.Color(map[n.type]||"#aaa");
   }
-
   function makeNodeObject(n){
     const r=radiusFor(n);
     const group=new THREE.Group();
@@ -158,24 +157,97 @@
     Graph.onEngineStop(()=>{ const params=new URLSearchParams(location.search); const qFind=params.get("find"); if(qFind) tryFindAndFocus(qFind); });
   }
 
-  // --------- UI overlays (same as before) ---------
-  // (controls, legend, topbar, filters) unchanged…
+  // --------- UI overlays ---------
+  // Node size / spread / zoom sliders
+  const controls=document.createElement("div");
+  Object.assign(controls.style,{position:"absolute",left:"20px",bottom:"20px",background:"rgba(0,0,0,0.6)",color:"#fff",padding:"10px",borderRadius:"8px"});
+  const sliderNode=document.createElement("input"); sliderNode.type="range"; sliderNode.min=2; sliderNode.max=12; sliderNode.value=nodeSize;
+  sliderNode.oninput=e=>{ nodeSize=+e.target.value; Graph.refresh(); syncQuery(); };
+  controls.innerHTML="Node Size:"; controls.appendChild(sliderNode);
+  const sliderSpread=document.createElement("input"); sliderSpread.type="range"; sliderSpread.min=20; sliderSpread.max=160; sliderSpread.value=universeSpread;
+  sliderSpread.oninput=e=>{ universeSpread=+e.target.value;
+    Graph.d3Force("charge",d3.forceManyBody().strength(-universeSpread));
+    Graph.d3Force("link",d3.forceLink().distance(universeSpread).strength(0.4));
+    Graph.numDimensions(3); Graph.refresh(); syncQuery(); };
+  controls.appendChild(document.createElement("br")); controls.append("Universe Spread:"); controls.appendChild(sliderSpread);
+  const sliderZoom=document.createElement("input"); sliderZoom.type="range"; sliderZoom.min=20; sliderZoom.max=250; sliderZoom.value=zoomDist;
+  sliderZoom.oninput=e=>{ zoomDist=+e.target.value; syncQuery(); };
+  controls.appendChild(document.createElement("br")); controls.append("Zoom Distance:"); controls.appendChild(sliderZoom);
+  document.body.appendChild(controls);
+
+  // Legend
+  const legend=document.createElement("div");
+  Object.assign(legend.style,{position:"absolute",top:"10px",right:"10px",background:"rgba(0,0,0,0.7)",color:"#fff",padding:"10px",borderRadius:"6px"});
+  legend.innerHTML=`<b>Legend</b><br>
+    <span style="color:${COLORS.root}">●</span> Root<br>
+    <span style="color:${COLORS.primary}">●</span> Primary<br>
+    <span style="color:${COLORS.extra}">●</span> Extra<br>
+    <span style="color:${COLORS.down}">●</span> Downline<br>
+    <span style="color:#ffdd00">◌</span> Leaf outline (inactive)<br>
+    <span style="color:${COLORS.forward}">●</span> Forward path<br>
+    <span style="color:${COLORS.back}">●</span> Backtrace<br>`;
+  document.body.appendChild(legend);
+
+  // Topbar (find / heat / isolate / export)
+  const topbar=document.createElement("div");
+  Object.assign(topbar.style,{position:"absolute",left:"20px",top:"20px",display:"flex",gap:".5rem",alignItems:"center",background:"rgba(0,0,0,0.6)",padding:"10px",borderRadius:"8px",color:"#fff"});
+  topbar.innerHTML=`<input id="findInput" placeholder="Find coin # (e.g., 2436)" style="width:210px;">
+    <button id="findBtn">Find</button>
+    <label><input type="checkbox" id="heatChk"> Heat by $</label>
+    <label><input type="checkbox" id="isolateChk"> Isolate subtree</label>
+    <button id="exportBtn" disabled>Export CSV</button>`;
+  document.body.appendChild(topbar);
+
+  const findInput=topbar.querySelector("#findInput"), findBtn=topbar.querySelector("#findBtn"),
+        heatChk=topbar.querySelector("#heatChk"), isolateChk=topbar.querySelector("#isolateChk"),
+        exportBtn=topbar.querySelector("#exportBtn");
+  findBtn.onclick=()=>tryFindAndFocus(findInput.value);
+  findInput.onkeydown=e=>{ if(e.key==="Enter") tryFindAndFocus(findInput.value); };
+  heatChk.onchange=e=>{ heatByDonation=!!e.target.checked; Graph.refresh(); syncQuery(); };
+  isolateChk.onchange=e=>{ isolateView=!!e.target.checked; Graph.refresh(); syncQuery(); };
+  function updateExportState(){ exportBtn.disabled=!selectedNode; }
+
+  exportBtn.onclick=()=>{ if(!selectedNode) return;
+    const rows=collectSubtree(selectedNode.id);
+    const header="coin_id,type,donation,parent_id,inactive\n";
+    const body=rows.map(r=>`${r.id},${r.type},${r.donation},${r.parent??""},${r.inactive}`).join("\n");
+    const blob=new Blob([header+body],{type:"text/csv"}); const url=URL.createObjectURL(blob);
+    const a=document.createElement("a"); a.href=url; a.download=`subtree_${selectedNode.id}.csv`; a.click(); URL.revokeObjectURL(url);
+  };
+
+  // Filters
+  const filters=document.createElement("div");
+  Object.assign(filters.style,{position:"absolute",left:"20px",top:"78px",background:"rgba(0,0,0,0.6)",color:"#fff",padding:"8px 10px",borderRadius:"8px",display:"grid",gridTemplateColumns:"auto auto",gap:"6px 16px"});
+  [["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive (leaf outline)"]].forEach(([key,label])=>{
+    const w=document.createElement("label"); const c=document.createElement("input"); c.type="checkbox"; c.checked=true;
+    c.onchange=()=>{ if(c.checked) visibleTypes.add(key); else visibleTypes.delete(key); Graph.refresh(); syncQuery(); };
+    w.appendChild(c); w.append(label); filters.appendChild(w);
+  });
+  document.body.appendChild(filters);
 
   // find logic
   function tryFindAndFocus(raw){
-    const id=Number(String(raw||"").replace(/\D/g,""));
-    if(!Number.isFinite(id)) return;
+    const id=Number(String(raw||"").replace(/\D/g,"")); if(!Number.isFinite(id)) return;
     const node=byId.get(id); if(!node) return;
     const wait=()=>Number.isFinite(node.x)?Promise.resolve():new Promise(res=>setTimeout(()=>res(wait()),100));
     wait().then(()=>highlightPath(node));
   }
 
-  function updateExportState(){ /* same as before */ }
-  function syncQuery(){ /* same as before */ }
-  function applyQuery(){ /* same as before */ }
+  // URL state
+  function syncQuery(){ const p=new URLSearchParams(location.search);
+    if(selectedNode) p.set("find",selectedNode.id); else p.delete("find");
+    p.set("size",String(nodeSize)); p.set("spread",String(universeSpread)); p.set("zoom",String(zoomDist));
+    p.set("isolate",isolateView?"1":"0"); p.set("heat",heatByDonation?"1":"0");
+    p.set("types",Array.from(visibleTypes).join(",")); history.replaceState({}, "", `${location.pathname}?${p.toString()}`); }
+  function applyQuery(){ const p=new URLSearchParams(location.search);
+    const qSize=+p.get("size"); if(qSize) nodeSize=qSize;
+    const qSpread=+p.get("spread"); if(qSpread) universeSpread=qSpread;
+    const qZoom=+p.get("zoom"); if(qZoom) zoomDist=qZoom;
+    if(p.get("isolate")==="1") isolateView=true;
+    if(p.get("heat")==="1") heatByDonation=true;
+  }
 
-  // --------- run ---------
+  // run
   const data=generateUniverse(3200,250);
-  draw(data);
-  applyQuery();
+  draw(data); applyQuery();
 })();
