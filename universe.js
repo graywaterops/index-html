@@ -39,32 +39,59 @@
     return Math.floor(500 + Math.random() * 4500);
   }
 
+  function pickBiasedParent() {
+    // 35% of the time, pick from extras+down to encourage more red growth
+    const redPool = nodes.filter(n => n.type === "extra" || n.type === "down");
+    if (redPool.length && Math.random() < 0.35) {
+      return redPool[Math.floor(Math.random() * redPool.length)];
+    }
+    return nodes[Math.floor(Math.random() * nodes.length)];
+  }
+
   function generateUniverse(total = 1000, seedRoots = 250) {
     nodes = []; links = []; byId = new Map();
     let id = 0;
 
     for (let i=0;i<seedRoots;i++) {
-      const n = { id:id++, type:"root", donation:randomDonation(), children:[], parent:null };
+      const n = { id:id++, type:"root", donation:randomDonation(), children:[], parent:null, inactive:false };
       nodes.push(n); byId.set(n.id, n);
     }
 
+    // Build remaining with a mild bias toward growing extras/downlines
     for (let i = seedRoots; i < total; i++) {
-      const parent = nodes[Math.floor(Math.random() * nodes.length)];
+      const parent = pickBiasedParent();
       const donation = randomDonation();
       let type = "primary";
       if (parent.children.length > 0) type = parent.type === "primary" ? "extra" : "down";
 
-      const child = { id:id++, type, donation, children:[], parent: parent.id };
+      const child = { id:id++, type, donation, children:[], parent: parent.id, inactive:false };
       nodes.push(child); byId.set(child.id, child);
       parent.children.push(child.id);
       links.push({ source: parent.id, target: child.id });
     }
 
-    nodes.forEach(n => { if (n.children.length === 0) n.type = "inactive"; });
+    // Post-pass: try to give childless EXTRAS one child (DOWN) without exceeding total cap
+    let remainingSlots = Math.max(0, total - nodes.length);
+    const childlessExtras = nodes.filter(n => n.type === "extra" && n.children.length === 0);
+    for (const ex of childlessExtras) {
+      if (remainingSlots <= 0) break;
+      // 60% chance to ensure they spawn one child
+      if (Math.random() < 0.6) {
+        const child = { id:id++, type:"down", donation:randomDonation(), children:[], parent: ex.id, inactive:false };
+        nodes.push(child); byId.set(child.id, child);
+        ex.children.push(child.id);
+        links.push({ source: ex.id, target: child.id });
+        remainingSlots--;
+      }
+    }
+
+    // Mark leaves as inactive **without changing their type**
+    nodes.forEach(n => { n.inactive = (n.children.length === 0); });
 
     // donation range for heat colors
     minDonation = Math.min(...nodes.map(n=>n.donation));
     maxDonation = Math.max(...nodes.map(n=>n.donation));
+
     return { nodes, links };
   }
 
@@ -96,7 +123,7 @@
     const rows = [];
     (function dfs(id){
       const n = byId.get(id); if (!n) return;
-      rows.push({ id:n.id, type:n.type, donation:n.donation, parent:n.parent });
+      rows.push({ id:n.id, type:n.type, donation:n.donation, parent:n.parent, inactive:n.inactive });
       n.children.forEach(dfs);
     })(rootId);
     return rows;
@@ -152,7 +179,10 @@
     syncQuery();
   }
 
-  function nodeIsVisibleByType(n){ return visibleTypes.has(n.type); }
+  function nodeIsVisibleByType(n){
+    const key = n.inactive ? "inactive" : n.type;
+    return visibleTypes.has(key);
+  }
   function nodeShouldDisplay(n){
     if (!nodeIsVisibleByType(n)) return false;
     if (isolateView && selectedNode) return highlightNodes.has(n.id);
@@ -175,9 +205,10 @@
       .graphData({nodes, links})
       .nodeLabel(n => {
         const total = getBloodlineTotal(n.id);
+        const key = n.inactive ? "inactive" : n.type;
         return `
           <div>
-            <b>${n.type.toUpperCase()}</b><br/>
+            <b>${key.toUpperCase()}</b><br/>
             Coin #: ${n.id}<br/>
             Donation: ${money(n.donation)}<br/>
             <b>Bloodline Total:</b> ${money(total)}
@@ -186,7 +217,7 @@
       .nodeVal(n => {
         if (!nodeShouldDisplay(n)) return 0.001;
         if (heatByDonation){
-          // Multiply base size by donation factor (50→0.5x...5000→50x relative to /100)
+          // Multiply base size by donation factor (e.g., 50→0.5x ... 5000→50x relative to /100)
           return Math.max(2, nodeSize * (n.donation / 100));
         }
         return nodeSize;
@@ -202,14 +233,15 @@
           return `rgb(${r},${g},60)`;
         }
 
+        const baseColor = n.inactive ? COLORS.inactive : (COLORS[n.type] || "#aaa");
         if (selectedNode) {
           if (highlightNodes.has(n.id)) {
             if (n.id === selectedNode.id) return COLORS.selected;
-            return COLORS[n.type] || "#aaa";
+            return baseColor;
           }
           return COLORS.faded;
         }
-        return COLORS[n.type] || "#aaa";
+        return baseColor;
       })
       .linkColor(l => {
         const src = l.source, tgt = l.target;
@@ -348,8 +380,8 @@
   exportBtn.addEventListener("click", () => {
     if (!selectedNode) return;
     const rows = collectSubtree(selectedNode.id);
-    const header = "coin_id,type,donation,parent_id\n";
-    const body = rows.map(r => `${r.id},${r.type},${r.donation},${r.parent??""}`).join("\n");
+    const header = "coin_id,type,donation,parent_id,inactive\n";
+    const body = rows.map(r => `${r.id},${r.type},${r.donation},${r.parent??""},${r.inactive}`).join("\n");
     const blob = new Blob([header+body], {type:"text/csv"});
     const url  = URL.createObjectURL(blob);
     const a = document.createElement("a");
