@@ -1,13 +1,21 @@
 (() => {
   const container = document.getElementById("graph");
-  const statusEl = document.getElementById("status");
+  const statusEl  = document.getElementById("status");
 
   let Graph;
   let nodes = [], links = [];
+  let byId = new Map();
+
+  // highlight/selection state
   let highlightNodes = new Set(), highlightLinks = new Set();
   let selectedNode = null;
+
+  // view state
   let nodeSize = 4;
-  let universeSpread = 60; // starting spread
+  let universeSpread = 60;
+  let heatByDonation = false;
+  let isolateView = false;
+  const visibleTypes = new Set(["root","primary","extra","down","inactive"]);
 
   const COLORS = {
     root: "#1f4aa8",       // dark blue
@@ -15,80 +23,93 @@
     extra: "#2ecc71",      // green
     down: "#e74c3c",       // red
     inactive: "#ffdd00",   // yellow
-    forward: "#00ff88",    // highlight forward
-    back: "#ffdd33",       // highlight back
-    selected: "#ffffff",   // clicked node
-    faded: "rgba(100,100,100,0.1)"
+    forward: "#00ff88",
+    back: "#ffdd33",
+    selected: "#ffffff",
+    faded: "rgba(100,100,100,0.08)",
+    hidden: "rgba(0,0,0,0)"
   };
 
-  // --- Donation generator
+  // ---------- helpers ----------
+  const money = v => `$${(v||0).toLocaleString()}`;
+
   function randomDonation() {
     const r = Math.random();
-    if (r < 0.75) return Math.floor(50 + Math.random() * 50);   // 75% between $50-$100
-    if (r < 0.95) return Math.floor(100 + Math.random() * 400); // 20% between $100-$500
-    return Math.floor(500 + Math.random() * 4500);              // 5% between $500-$5000
+    if (r < 0.75) return Math.floor(50 + Math.random() * 50);
+    if (r < 0.95) return Math.floor(100 + Math.random() * 400);
+    return Math.floor(500 + Math.random() * 4500);
   }
 
-  // --- Universe builder
   function generateUniverse(total = 1000, seedRoots = 250) {
-    nodes = [];
-    links = [];
+    nodes = []; links = []; byId = new Map();
     let id = 0;
 
-    // Create initial roots
-    for (let i = 0; i < seedRoots; i++) {
-      nodes.push({ id: id++, type: "root", donation: randomDonation(), children: [] });
+    for (let i=0;i<seedRoots;i++) {
+      const n = { id:id++, type:"root", donation:randomDonation(), children:[], parent:null };
+      nodes.push(n);
+      byId.set(n.id, n);
     }
 
-    // Build rest of the donors
     for (let i = seedRoots; i < total; i++) {
       const parent = nodes[Math.floor(Math.random() * nodes.length)];
       const donation = randomDonation();
-
-      // Assign type: first referral = primary, second+ = extra, under extra = downline
       let type = "primary";
       if (parent.children.length > 0) type = parent.type === "primary" ? "extra" : "down";
 
-      const child = { id: id++, type, donation, children: [] };
-      nodes.push(child);
+      const child = { id:id++, type, donation, children:[], parent: parent.id };
+      nodes.push(child); byId.set(child.id, child);
       parent.children.push(child.id);
       links.push({ source: parent.id, target: child.id });
     }
 
-    // Mark inactive nodes (no children)
-    nodes.forEach(n => {
-      if (n.children.length === 0) n.type = "inactive";
-    });
-
+    nodes.forEach(n => { if (n.children.length === 0) n.type = "inactive"; });
     return { nodes, links };
   }
 
-  // --- Bloodline total calculation
-  function getBloodlineTotal(rootId) {
-    let total = 0;
-    const visited = new Set();
-    function dfs(id) {
-      if (visited.has(id)) return;
-      visited.add(id);
-      const node = nodes.find(n => n.id === id);
-      if (!node) return;
-      total += node.donation || 0;
-      node.children.forEach(dfs);
-    }
-    dfs(rootId);
+  function getBloodlineTotal(rootId){
+    let total = 0; const seen = new Set();
+    (function dfs(id){
+      if (seen.has(id)) return;
+      seen.add(id);
+      const n = byId.get(id); if (!n) return;
+      total += n.donation || 0;
+      n.children.forEach(dfs);
+    })(rootId);
     return total;
   }
 
-  // --- Highlight logic
-  function clearHighlights() {
+  function getSubtreeStats(rootId){
+    let count=0,total=0,depth=0;
+    (function dfs(id,d){
+      count++; depth = Math.max(depth,d);
+      const n = byId.get(id); if (!n) return;
+      total += n.donation||0;
+      n.children.forEach(c=>dfs(c,d+1));
+    })(rootId,0);
+    return {count,total,depth};
+  }
+
+  function collectSubtree(rootId){
+    const rows = [];
+    (function dfs(id){
+      const n = byId.get(id); if (!n) return;
+      rows.push({ id:n.id, type:n.type, donation:n.donation, parent:n.parent });
+      n.children.forEach(dfs);
+    })(rootId);
+    return rows;
+  }
+
+  function clearHighlights(){
     highlightNodes.clear();
     highlightLinks.clear();
     selectedNode = null;
+    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     Graph.refresh();
   }
 
-  function highlightPath(node) {
-    clearHighlights();
+  function highlightPath(node){
+    highlightNodes.clear();
+    highlightLinks.clear();
     selectedNode = node;
 
     const visitDown = (id) => {
@@ -100,7 +121,6 @@
         }
       });
     };
-
     const visitUp = (id) => {
       links.forEach(l => {
         if (l.target.id === id) {
@@ -113,26 +133,53 @@
 
     visitDown(node.id);
     visitUp(node.id);
+
+    const stats = getSubtreeStats(node.id);
+    if (statusEl){
+      statusEl.textContent =
+        `Focused coin #${node.id} — subtree: ${stats.count} donors, ${money(stats.total)} total, depth ${stats.depth}. (ESC to reset)`;
+    }
     Graph.refresh();
+    updateExportState();
   }
 
-  // --- Draw graph
-  function draw({ nodes, links }) {
+  function nodeIsVisibleByType(n){
+    return visibleTypes.has(n.type);
+  }
+
+  function nodeShouldDisplay(n){
+    if (!nodeIsVisibleByType(n)) return false;
+    if (isolateView && selectedNode) return highlightNodes.has(n.id);
+    return true;
+  }
+
+  // ---------- draw ----------
+  function draw({nodes, links}){
     Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
-      .graphData({ nodes, links })
+      .graphData({nodes, links})
       .nodeLabel(n => {
-        const total = n.type === "root" ? getBloodlineTotal(n.id) : null;
+        const total = getBloodlineTotal(n.id);
         return `
           <div>
             <b>${n.type.toUpperCase()}</b><br/>
             Coin #: ${n.id}<br/>
-            Donation: $${n.donation}<br/>
-            ${total ? `<b>Bloodline Total:</b> $${total}` : ""}
+            Donation: ${money(n.donation)}<br/>
+            <b>Bloodline Total:</b> ${money(total)}
           </div>`;
       })
-      .nodeVal(() => nodeSize)
+      .nodeVal(n => {
+        if (!nodeShouldDisplay(n)) return 0.001; // effectively hidden
+        if (heatByDonation){
+          // base + scaled by log of donation
+          const s = Math.log10(Math.max(10, n.donation)) - 1; // 0..~2.6
+          return Math.max(1, nodeSize + s*2.2);
+        }
+        return nodeSize;
+      })
       .nodeColor(n => {
+        if (!nodeShouldDisplay(n)) return COLORS.hidden;
+
         if (selectedNode) {
           if (highlightNodes.has(n.id)) {
             if (n.id === selectedNode.id) return COLORS.selected;
@@ -143,84 +190,72 @@
         return COLORS[n.type] || "#aaa";
       })
       .linkColor(l => {
-        if (selectedNode) {
-          return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
-        }
+        const src = l.source, tgt = l.target;
+        const show = nodeShouldDisplay(src) && nodeShouldDisplay(tgt);
+        if (!show) return COLORS.hidden;
+        if (selectedNode) return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
         return "rgba(180,180,180,0.2)";
       })
       .linkWidth(l => (highlightLinks.has(l) ? 2.2 : 0.4))
       .onNodeClick(highlightPath)
       .d3Force("charge", d3.forceManyBody().strength(-universeSpread))
-      .d3Force("link", d3.forceLink().distance(universeSpread).strength(0.4))
-      .d3Force("center", d3.forceCenter(0, 0, 0));
+      .d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4))
+      .d3Force("center", d3.forceCenter(0,0,0));
 
-    if (statusEl) {
-      statusEl.textContent =
-        `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    }
+    if (statusEl) statusEl.textContent =
+      `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
 
     // ESC to reset
-    window.addEventListener("keydown", ev => {
-      if (ev.key === "Escape") clearHighlights();
-    });
+    window.addEventListener("keydown", ev => { if (ev.key === "Escape") clearHighlights(); });
 
-    // After engine settles, honor any ?find= query
+    // honor URL query after layout stabilizes
     Graph.onEngineStop(() => {
       const params = new URLSearchParams(location.search);
-      const q = params.get("find");
-      if (q) tryFindAndFocus(q);
+      const qFind = params.get("find");
+      if (qFind) tryFindAndFocus(qFind);
     });
   }
 
-  // --- Controls
+  // ---------- UI: controls ----------
   const controls = document.createElement("div");
-  controls.style.position = "absolute";
-  controls.style.left = "20px";
-  controls.style.bottom = "20px";
-  controls.style.background = "rgba(0,0,0,0.6)";
-  controls.style.color = "#fff";
-  controls.style.padding = "10px";
-  controls.style.borderRadius = "8px";
+  Object.assign(controls.style, {
+    position:"absolute", left:"20px", bottom:"20px",
+    background:"rgba(0,0,0,0.6)", color:"#fff",
+    padding:"10px", borderRadius:"8px", lineHeight:"1.1"
+  });
 
   // Node Size
+  const labelNode = document.createElement("label");
+  labelNode.textContent = "Node Size:";
+  labelNode.style.display = "block";
   const sliderNode = document.createElement("input");
-  sliderNode.type = "range";
-  sliderNode.min = 2;
-  sliderNode.max = 12;
-  sliderNode.value = nodeSize;
-  sliderNode.oninput = e => {
-    nodeSize = +e.target.value;
-    Graph.nodeVal(() => nodeSize);
-    Graph.refresh();
-  };
-  controls.append("Node Size:", sliderNode, document.createElement("br"));
+  sliderNode.type = "range"; sliderNode.min = 2; sliderNode.max = 12; sliderNode.value = nodeSize;
+  sliderNode.oninput = e => { nodeSize = +e.target.value; Graph.refresh(); };
+  controls.append(labelNode, sliderNode, document.createElement("br"));
 
   // Universe Spread
+  const labelSpread = document.createElement("label");
+  labelSpread.textContent = "Universe Spread:";
+  labelSpread.style.display = "block";
   const sliderSpread = document.createElement("input");
-  sliderSpread.type = "range";
-  sliderSpread.min = 20;
-  sliderSpread.max = 120;
-  sliderSpread.value = universeSpread;
+  sliderSpread.type = "range"; sliderSpread.min = 20; sliderSpread.max = 120; sliderSpread.value = universeSpread;
   sliderSpread.oninput = e => {
     universeSpread = +e.target.value;
     Graph.d3Force("charge", d3.forceManyBody().strength(-universeSpread));
-    Graph.d3Force("link", d3.forceLink().distance(universeSpread).strength(0.4));
-    Graph.numDimensions(3); // keep globe-like
+    Graph.d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4));
+    Graph.numDimensions(3);
     Graph.refresh();
   };
-  controls.append("Universe Spread:", sliderSpread);
-
+  controls.append(labelSpread, sliderSpread);
   document.body.appendChild(controls);
 
-  // --- Legend
+  // ---------- UI: legend ----------
   const legend = document.createElement("div");
-  legend.style.position = "absolute";
-  legend.style.top = "10px";
-  legend.style.right = "10px";
-  legend.style.background = "rgba(0,0,0,0.7)";
-  legend.style.color = "#fff";
-  legend.style.padding = "10px";
-  legend.style.borderRadius = "6px";
+  Object.assign(legend.style, {
+    position:"absolute", top:"10px", right:"10px",
+    background:"rgba(0,0,0,0.7)", color:"#fff",
+    padding:"10px", borderRadius:"6px"
+  });
   legend.innerHTML = `
     <b>Legend</b><br>
     <span style="color:${COLORS.root}">●</span> Root<br>
@@ -233,64 +268,151 @@
   `;
   document.body.appendChild(legend);
 
-  // --- Finder UI (top-left above controls)
-  const finder = document.createElement("div");
-  finder.style.position = "absolute";
-  finder.style.left = "20px";
-  finder.style.top = "20px";
-  finder.style.display = "flex";
-  finder.style.gap = ".5rem";
-  finder.style.alignItems = "center";
-  finder.style.background = "rgba(0,0,0,0.6)";
-  finder.style.padding = "10px";
-  finder.style.borderRadius = "8px";
-  finder.innerHTML = `
+  // ---------- UI: finder/top bar ----------
+  const topbar = document.createElement("div");
+  Object.assign(topbar.style, {
+    position:"absolute", left:"20px", top:"20px",
+    display:"flex", gap:".5rem", alignItems:"center",
+    background:"rgba(0,0,0,0.6)", padding:"10px", borderRadius:"8px", color:"#fff"
+  });
+
+  topbar.innerHTML = `
     <input id="findInput" inputmode="numeric" pattern="[0-9]*"
       placeholder="Find coin # (e.g., 2436)"
       style="width:210px;padding:.5rem .65rem;border-radius:.5rem;border:1px solid #334;background:#0b1220;color:#cfe3ff;">
-    <button id="findBtn" style="padding:.55rem .8rem;border-radius:.5rem;border:0;background:#3478f6;color:#fff;">
-      Find
+    <button id="findBtn" style="padding:.55rem .8rem;border-radius:.5rem;border:0;background:#3478f6;color:#fff;">Find</button>
+    <label style="display:flex;gap:.35rem;align-items:center;">
+      <input type="checkbox" id="heatChk"> Heat by $ </label>
+    <label style="display:flex;gap:.35rem;align-items:center;">
+      <input type="checkbox" id="isolateChk"> Isolate subtree </label>
+    <button id="exportBtn" style="padding:.45rem .7rem;border-radius:.5rem;border:1px solid #444;background:#0b1220;color:#cfe3ff;opacity:.6;cursor:not-allowed;">
+      Export CSV
     </button>
   `;
-  document.body.appendChild(finder);
+  document.body.appendChild(topbar);
 
-  const findInput = finder.querySelector("#findInput");
-  const findBtn = finder.querySelector("#findBtn");
+  const findInput = topbar.querySelector("#findInput");
+  const findBtn   = topbar.querySelector("#findBtn");
+  const heatChk   = topbar.querySelector("#heatChk");
+  const isolateChk= topbar.querySelector("#isolateChk");
+  const exportBtn = topbar.querySelector("#exportBtn");
+
   findBtn.addEventListener("click", () => tryFindAndFocus(findInput.value));
-  findInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tryFindAndFocus(findInput.value); });
+  findInput.addEventListener("keydown", e => { if (e.key === "Enter") tryFindAndFocus(findInput.value); });
 
-  function tryFindAndFocus(raw) {
-    const id = Number(String(raw || "").replace(/\D/g, ""));
-    if (!id && id !== 0) return pulse(findInput, "#ff6b6b");
+  heatChk.addEventListener("change", e => { heatByDonation = !!e.target.checked; Graph.refresh(); syncQuery(); });
+  isolateChk.addEventListener("change", e => { isolateView = !!e.target.checked; Graph.refresh(); syncQuery(); });
 
-    const node = nodes.find(n => n.id === id);
-    if (!node) return pulse(findInput, "#ffb020");
+  function updateExportState(){
+    if (selectedNode){
+      exportBtn.style.opacity = "1"; exportBtn.style.cursor="pointer";
+      exportBtn.disabled = false;
+    } else {
+      exportBtn.style.opacity = ".6"; exportBtn.style.cursor="not-allowed";
+      exportBtn.disabled = true;
+    }
+  }
 
-    // If layout hasn't assigned coordinates yet, wait for it
+  exportBtn.addEventListener("click", () => {
+    if (!selectedNode) return;
+    const rows = collectSubtree(selectedNode.id);
+    const header = "coin_id,type,donation,parent_id\n";
+    const body = rows.map(r => `${r.id},${r.type},${r.donation},${r.parent??""}`).join("\n");
+    const blob = new Blob([header+body], {type:"text/csv"});
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `subtree_${selectedNode.id}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+
+  // ---------- UI: type filters ----------
+  const filters = document.createElement("div");
+  Object.assign(filters.style, {
+    position:"absolute", left:"20px", top:"78px",
+    background:"rgba(0,0,0,0.6)", color:"#fff", padding:"8px 10px",
+    borderRadius:"8px", display:"grid", gridTemplateColumns:"auto auto", gap:"6px 16px"
+  });
+
+  const TYPES = [
+    ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive"]
+  ];
+
+  TYPES.forEach(([key,label])=>{
+    const w = document.createElement("label");
+    w.style.display="flex"; w.style.alignItems="center"; w.style.gap=".35rem";
+    const c = document.createElement("input"); c.type="checkbox"; c.checked = true;
+    c.addEventListener("change", ()=>{ if (c.checked) visibleTypes.add(key); else visibleTypes.delete(key); Graph.refresh(); syncQuery(); });
+    w.appendChild(c); w.appendChild(document.createTextNode(label));
+    filters.appendChild(w);
+  });
+  document.body.appendChild(filters);
+
+  // ---------- Finder logic ----------
+  function tryFindAndFocus(raw){
+    const id = Number(String(raw||"").replace(/\D/g,""));
+    if (!Number.isFinite(id)) return pulse(findInput,"#ff6b6b");
+
+    const node = byId.get(id);
+    if (!node) return pulse(findInput,"#ffb020");
+
     const waitForPos = () => (Number.isFinite(node.x) ? Promise.resolve() :
-      new Promise(res => setTimeout(() => res(waitForPos()), 120)));
-    waitForPos().then(() => {
+      new Promise(res => setTimeout(()=>res(waitForPos()), 120)));
+
+    waitForPos().then(()=>{
       highlightPath(node);
-      // camera fly-to with a small offset to frame the node
-      const dist = 40; // adjust for your scene scale
-      const lookAt = { x: node.x, y: node.y, z: node.z };
-      const camPos = {
-        x: node.x + dist,
-        y: node.y + dist * 0.8,
-        z: node.z + dist
-      };
+
+      const dist = 40;
+      const lookAt = {x:node.x, y:node.y, z:node.z};
+      const camPos = {x:node.x+dist, y:node.y+dist*0.8, z:node.z+dist};
       Graph.cameraPosition(camPos, lookAt, 900);
+
       pulse(findInput, "#00ff9c");
+      syncQuery(); // keep URL shareable
     });
   }
 
-  function pulse(el, color) {
+  function pulse(el,color){
     const old = el.style.boxShadow;
     el.style.boxShadow = `0 0 0 3px ${color}55`;
-    setTimeout(() => (el.style.boxShadow = old), 450);
+    setTimeout(()=> el.style.boxShadow = old, 450);
   }
 
-  // --- Run
+  // ---------- URL params <-> state ----------
+  function applyQuery(){
+    const p = new URLSearchParams(location.search);
+
+    const qSize = +p.get("size"); if (qSize) { nodeSize = qSize; sliderNode.value = nodeSize; }
+    const qSpread = +p.get("spread"); if (qSpread) { universeSpread = qSpread; sliderSpread.value = universeSpread; }
+    const qIsolate = p.get("isolate"); if (qIsolate === "1") { isolateView = true; isolateChk.checked = true; }
+    const qHeat = p.get("heat"); if (qHeat === "1") { heatByDonation = true; heatChk.checked = true; }
+    const qTypes = p.get("types");
+    if (qTypes){
+      visibleTypes.clear();
+      qTypes.split(",").forEach(t => { if (t) visibleTypes.add(t); });
+      // sync checkboxes
+      Array.from(filters.querySelectorAll("input[type=checkbox]")).forEach((cb,i)=>{
+        const key = TYPES[i][0]; cb.checked = visibleTypes.has(key);
+      });
+    }
+  }
+
+  function syncQuery(){
+    const p = new URLSearchParams(location.search);
+    if (selectedNode) p.set("find", selectedNode.id);
+    else p.delete("find");
+
+    p.set("size", String(nodeSize));
+    p.set("spread", String(universeSpread));
+    p.set("isolate", isolateView ? "1" : "0");
+    p.set("heat", heatByDonation ? "1" : "0");
+    p.set("types", Array.from(visibleTypes).join(","));
+
+    const url = `${location.pathname}?${p.toString()}`;
+    window.history.replaceState({}, "", url);
+  }
+
+  // ---------- run ----------
   const data = generateUniverse(3200, 250);
   draw(data);
+  applyQuery(); // read any URL state on load
 })();
