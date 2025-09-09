@@ -10,19 +10,20 @@
   let highlightNodes = new Set(), highlightLinks = new Set();
   let selectedNode = null;
 
-  // view state
+  // view state (defaults)
   let nodeSize = 4;
   let universeSpread = 60;
+  let zoomDist = 90;              // <— NEW: camera distance when focusing
   let heatByDonation = false;
   let isolateView = false;
   const visibleTypes = new Set(["root","primary","extra","down","inactive"]);
 
   const COLORS = {
-    root: "#1f4aa8",       // dark blue
-    primary: "#7cc3ff",    // light blue
-    extra: "#2ecc71",      // green
-    down: "#e74c3c",       // red
-    inactive: "#ffdd00",   // yellow
+    root: "#1f4aa8",
+    primary: "#7cc3ff",
+    extra: "#2ecc71",
+    down: "#e74c3c",
+    inactive: "#ffdd00",
     forward: "#00ff88",
     back: "#ffdd33",
     selected: "#ffffff",
@@ -44,12 +45,13 @@
     nodes = []; links = []; byId = new Map();
     let id = 0;
 
+    // roots
     for (let i=0;i<seedRoots;i++) {
       const n = { id:id++, type:"root", donation:randomDonation(), children:[], parent:null };
-      nodes.push(n);
-      byId.set(n.id, n);
+      nodes.push(n); byId.set(n.id, n);
     }
 
+    // rest
     for (let i = seedRoots; i < total; i++) {
       const parent = nodes[Math.floor(Math.random() * nodes.length)];
       const donation = randomDonation();
@@ -62,6 +64,7 @@
       links.push({ source: parent.id, target: child.id });
     }
 
+    // mark inactive
     nodes.forEach(n => { if (n.children.length === 0) n.type = "inactive"; });
     return { nodes, links };
   }
@@ -103,8 +106,11 @@
     highlightNodes.clear();
     highlightLinks.clear();
     selectedNode = null;
-    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    if (statusEl) statusEl.textContent =
+      `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     Graph.refresh();
+    updateExportState();
+    syncQuery();
   }
 
   function highlightPath(node){
@@ -141,16 +147,30 @@
     }
     Graph.refresh();
     updateExportState();
+    focusCamera(node);           // <— NEW: camera focus obeys zoomDist
+    syncQuery();
   }
 
   function nodeIsVisibleByType(n){
     return visibleTypes.has(n.type);
   }
-
   function nodeShouldDisplay(n){
     if (!nodeIsVisibleByType(n)) return false;
     if (isolateView && selectedNode) return highlightNodes.has(n.id);
     return true;
+  }
+
+  // ---------- camera focus (uses zoomDist) ----------
+  function focusCamera(node){
+    if (!node) return;
+    const dist = zoomDist;  // user-controlled distance
+    const lookAt = { x: node.x, y: node.y, z: node.z };
+    const camPos = {
+      x: node.x + dist,
+      y: node.y + dist * 0.8,
+      z: node.z + dist
+    };
+    Graph.cameraPosition(camPos, lookAt, 800);
   }
 
   // ---------- draw ----------
@@ -169,9 +189,8 @@
           </div>`;
       })
       .nodeVal(n => {
-        if (!nodeShouldDisplay(n)) return 0.001; // effectively hidden
+        if (!nodeShouldDisplay(n)) return 0.001;
         if (heatByDonation){
-          // base + scaled by log of donation
           const s = Math.log10(Math.max(10, n.donation)) - 1; // 0..~2.6
           return Math.max(1, nodeSize + s*2.2);
         }
@@ -179,7 +198,6 @@
       })
       .nodeColor(n => {
         if (!nodeShouldDisplay(n)) return COLORS.hidden;
-
         if (selectedNode) {
           if (highlightNodes.has(n.id)) {
             if (n.id === selectedNode.id) return COLORS.selected;
@@ -208,7 +226,7 @@
     // ESC to reset
     window.addEventListener("keydown", ev => { if (ev.key === "Escape") clearHighlights(); });
 
-    // honor URL query after layout stabilizes
+    // honor URL ?find= after layout
     Graph.onEngineStop(() => {
       const params = new URLSearchParams(location.search);
       const qFind = params.get("find");
@@ -230,7 +248,7 @@
   labelNode.style.display = "block";
   const sliderNode = document.createElement("input");
   sliderNode.type = "range"; sliderNode.min = 2; sliderNode.max = 12; sliderNode.value = nodeSize;
-  sliderNode.oninput = e => { nodeSize = +e.target.value; Graph.refresh(); };
+  sliderNode.oninput = e => { nodeSize = +e.target.value; Graph.refresh(); syncQuery(); };
   controls.append(labelNode, sliderNode, document.createElement("br"));
 
   // Universe Spread
@@ -238,15 +256,26 @@
   labelSpread.textContent = "Universe Spread:";
   labelSpread.style.display = "block";
   const sliderSpread = document.createElement("input");
-  sliderSpread.type = "range"; sliderSpread.min = 20; sliderSpread.max = 120; sliderSpread.value = universeSpread;
+  sliderSpread.type = "range"; sliderSpread.min = 20; sliderSpread.max = 160; sliderSpread.value = universeSpread;
   sliderSpread.oninput = e => {
     universeSpread = +e.target.value;
     Graph.d3Force("charge", d3.forceManyBody().strength(-universeSpread));
     Graph.d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4));
     Graph.numDimensions(3);
     Graph.refresh();
+    syncQuery();
   };
-  controls.append(labelSpread, sliderSpread);
+  controls.append(labelSpread, sliderSpread, document.createElement("br"));
+
+  // Zoom Distance (NEW)
+  const labelZoom = document.createElement("label");
+  labelZoom.textContent = "Zoom Distance:";
+  labelZoom.style.display = "block";
+  const sliderZoom = document.createElement("input");
+  sliderZoom.type = "range"; sliderZoom.min = 20; sliderZoom.max = 250; sliderZoom.value = zoomDist;
+  sliderZoom.oninput = e => { zoomDist = +e.target.value; syncQuery(); };
+  controls.append(labelZoom, sliderZoom);
+
   document.body.appendChild(controls);
 
   // ---------- UI: legend ----------
@@ -359,15 +388,8 @@
       new Promise(res => setTimeout(()=>res(waitForPos()), 120)));
 
     waitForPos().then(()=>{
-      highlightPath(node);
-
-      const dist = 40;
-      const lookAt = {x:node.x, y:node.y, z:node.z};
-      const camPos = {x:node.x+dist, y:node.y+dist*0.8, z:node.z+dist};
-      Graph.cameraPosition(camPos, lookAt, 900);
-
+      highlightPath(node);      // will call focusCamera(node) using zoomDist
       pulse(findInput, "#00ff9c");
-      syncQuery(); // keep URL shareable
     });
   }
 
@@ -381,15 +403,15 @@
   function applyQuery(){
     const p = new URLSearchParams(location.search);
 
-    const qSize = +p.get("size"); if (qSize) { nodeSize = qSize; sliderNode.value = nodeSize; }
-    const qSpread = +p.get("spread"); if (qSpread) { universeSpread = qSpread; sliderSpread.value = universeSpread; }
+    const qSize = +p.get("size");    if (qSize)  { nodeSize = qSize; sliderNode.value = nodeSize; }
+    const qSpread = +p.get("spread");if (qSpread){ universeSpread = qSpread; sliderSpread.value = universeSpread; }
+    const qZoom = +p.get("zoom");    if (qZoom)  { zoomDist = qZoom; sliderZoom.value = zoomDist; }
     const qIsolate = p.get("isolate"); if (qIsolate === "1") { isolateView = true; isolateChk.checked = true; }
-    const qHeat = p.get("heat"); if (qHeat === "1") { heatByDonation = true; heatChk.checked = true; }
+    const qHeat = p.get("heat");       if (qHeat === "1") { heatByDonation = true; heatChk.checked = true; }
     const qTypes = p.get("types");
     if (qTypes){
       visibleTypes.clear();
       qTypes.split(",").forEach(t => { if (t) visibleTypes.add(t); });
-      // sync checkboxes
       Array.from(filters.querySelectorAll("input[type=checkbox]")).forEach((cb,i)=>{
         const key = TYPES[i][0]; cb.checked = visibleTypes.has(key);
       });
@@ -403,6 +425,7 @@
 
     p.set("size", String(nodeSize));
     p.set("spread", String(universeSpread));
+    p.set("zoom", String(zoomDist));                      // <— NEW
     p.set("isolate", isolateView ? "1" : "0");
     p.set("heat", heatByDonation ? "1" : "0");
     p.set("types", Array.from(visibleTypes).join(","));
@@ -414,5 +437,5 @@
   // ---------- run ----------
   const data = generateUniverse(3200, 250);
   draw(data);
-  applyQuery(); // read any URL state on load
+  applyQuery(); // load URL state
 })();
