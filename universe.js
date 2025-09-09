@@ -2,6 +2,9 @@
   const container = document.getElementById("graph");
   const statusEl  = document.getElementById("status");
 
+  // ensure THREE is available
+  const { THREE } = ForceGraph3D;
+
   let Graph;
   let nodes = [], links = [];
   let byId = new Map();
@@ -165,3 +168,4 @@
   const data=generateUniverse(3200,250);
   draw(data);
 })();
+
