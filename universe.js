@@ -1,4 +1,6 @@
 (() => {
+  "use strict";
+
   const container = document.getElementById("graph");
   const statusEl  = document.getElementById("status");
 
@@ -7,7 +9,8 @@
   let byId = new Map();
 
   // selection/highlight
-  let highlightNodes = new Set(), highlightLinks = new Set();
+  let highlightNodes = new Set();
+  let highlightLinkKeys = new Set(); // id-based keys "src->tgt"
   let selectedNode = null;
 
   // view state
@@ -38,12 +41,10 @@
     return Math.floor(500 + Math.random() * 4500);
   }
 
-  // Bias: sometimes grow under extras/downlines to create more red
+  // mild bias: grow under extras/downlines to show more red
   function pickBiasedParent() {
     const pool = nodes.filter(n => n.type === "extra" || n.type === "down");
-    if (pool.length && Math.random() < 0.35) {
-      return pool[Math.floor(Math.random() * pool.length)];
-    }
+    if (pool.length && Math.random() < 0.35) return pool[Math.floor(Math.random() * pool.length)];
     return nodes[Math.floor(Math.random() * nodes.length)];
   }
 
@@ -65,9 +66,10 @@
       const child = { id:id++, type, donation, children:[], parent: parent.id, inactive:false };
       nodes.push(child); byId.set(child.id, child);
       parent.children.push(child.id);
-      links.push({ source: parent.id, target: child.id }); // numeric ids on purpose
+      links.push({ source: parent.id, target: child.id }); // keep numeric ids
     }
 
+    // mark leaf nodes, keep their true type
     nodes.forEach(n => { n.inactive = (n.children.length === 0); });
 
     minDonation = Math.min(...nodes.map(n=>n.donation));
@@ -112,8 +114,7 @@
   // ---------------- rendering helpers ----------------
   function radiusFor(n){
     if (!nodeShouldDisplay(n)) return 0.001;
-    if (heatByDonation) return Math.max(2, nodeSize * (n.donation / 100));
-    return nodeSize;
+    return heatByDonation ? Math.max(2, nodeSize * (n.donation / 100)) : nodeSize;
   }
 
   function baseColorFor(n){
@@ -131,23 +132,24 @@
     const r = Math.max(0.001, radiusFor(n));
     const group = new THREE.Group();
 
-    // fill sphere (self-lit)
-    const geo = new THREE.SphereGeometry(1, 12, 12);
-    const mat = new THREE.MeshBasicMaterial({ color: baseColorFor(n) });
-    const fill = new THREE.Mesh(geo, mat);
+    // self-lit fill
+    const fill = new THREE.Mesh(
+      new THREE.SphereGeometry(1, 12, 12),
+      new THREE.MeshBasicMaterial({ color: baseColorFor(n) })
+    );
     fill.name = "__fill";
     fill.scale.set(r, r, r);
     group.add(fill);
 
-    // yellow wireframe outline for leaves
-    const wire = new THREE.Mesh(
+    // yellow wireframe outline for leaves (keeps fill color)
+    const outline = new THREE.Mesh(
       new THREE.SphereGeometry(1.01, 12, 12),
       new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true, transparent: true, opacity: 0.95 })
     );
-    wire.name = "__outline";
-    wire.visible = !!n.inactive;
-    wire.scale.set(r*1.18, r*1.18, r*1.18);
-    group.add(wire);
+    outline.name = "__outline";
+    outline.visible = !!n.inactive;
+    outline.scale.set(r*1.18, r*1.18, r*1.18);
+    group.add(outline);
 
     group.visible = nodeShouldDisplay(n);
     return group;
@@ -177,12 +179,17 @@
   }
 
   // ---------------- selection / camera ----------------
+  function linkKeyFrom(l){
+    const s = typeof l.source === "object" ? l.source.id : l.source;
+    const t = typeof l.target === "object" ? l.target.id : l.target;
+    return `${s}->${t}`;
+  }
+
   function clearHighlights(){
     highlightNodes.clear();
-    highlightLinks.clear();
+    highlightLinkKeys.clear();
     selectedNode = null;
-    if (statusEl) statusEl.textContent =
-      `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
     Graph.refresh();
     updateExportState();
     syncQuery();
@@ -190,23 +197,23 @@
 
   function highlightPath(node){
     highlightNodes.clear();
-    highlightLinks.clear();
+    highlightLinkKeys.clear();
     selectedNode = node;
 
-    // NOTE: our local links use numeric ids for source/target
+    // traverse using our numeric-id links (no object assumptions)
     const visitDown = (id) => {
       highlightNodes.add(id);
       links.forEach(l => {
-        if (l.source === id) { // safe: numeric
-          highlightLinks.add(l);
+        if (l.source === id) {
+          highlightLinkKeys.add(`${l.source}->${l.target}`);
           visitDown(l.target);
         }
       });
     };
     const visitUp = (id) => {
       links.forEach(l => {
-        if (l.target === id) { // safe: numeric
-          highlightLinks.add(l);
+        if (l.target === id) {
+          highlightLinkKeys.add(`${l.source}->${l.target}`);
           highlightNodes.add(l.source);
           visitUp(l.source);
         }
@@ -232,6 +239,7 @@
     return visibleTypes.has(key);
   }
   function nodeShouldDisplay(n){
+    if (!n) return true; // defensive: during early hydration
     if (!nodeIsVisibleByType(n)) return false;
     if (isolateView && selectedNode) return highlightNodes.has(n.id);
     return true;
@@ -259,16 +267,15 @@
         return `<div><b>${key.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
       })
       .linkColor(l => {
-        // SAFE access whether source/target are numbers or objects
         const srcId = typeof l.source === "object" ? l.source.id : l.source;
         const tgtId = typeof l.target === "object" ? l.target.id : l.target;
         const srcNode = byId.get(srcId), tgtNode = byId.get(tgtId);
         const show = nodeShouldDisplay(srcNode) && nodeShouldDisplay(tgtNode);
         if (!show) return COLORS.hidden;
-        if (selectedNode) return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
+        if (selectedNode) return highlightLinkKeys.has(linkKeyFrom(l)) ? COLORS.forward : COLORS.faded;
         return "rgba(180,180,180,0.2)";
       })
-      .linkWidth(l => (highlightLinks.has(l) ? 2.2 : 0.4))
+      .linkWidth(l => (highlightLinkKeys.has(linkKeyFrom(l)) ? 2.2 : 0.4))
       .onNodeClick(highlightPath)
       .d3Force("charge", d3.forceManyBody().strength(-universeSpread))
       .d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4))
@@ -277,9 +284,7 @@
     // IMPORTANT: apply data AFTER renderers are configured
     Graph.graphData({ nodes, links });
 
-    if (statusEl) {
-      statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    }
+    if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
 
     // ESC to reset
     window.addEventListener("keydown", ev => { if (ev.key === "Escape") clearHighlights(); });
@@ -462,5 +467,5 @@
   // ---------------- run ----------------
   const data = generateUniverse(3200, 250);
   draw(data);
-  applyQuery();
+  applyQuery(); // optional URL restore
 })();
