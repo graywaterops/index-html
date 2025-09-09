@@ -16,14 +16,15 @@
   let zoomDist = 90;
   let heatByDonation = false;
   let isolateView = false;
-  const visibleTypes = new Set(["root","primary","extra","down","inactive"]);
+  const visibleTypes = new Set(["root","primary","extra","down","inactive"]); // "inactive" controls leaf outline visibility
 
   // donation range (for heat color)
   let minDonation = 0, maxDonation = 1;
 
   const COLORS = {
     root: "#1f4aa8", primary: "#7cc3ff", extra: "#2ecc71",
-    down: "#e74c3c", inactive: "#ffdd00",
+    down: "#e74c3c",
+    inactiveOutline: 0xffdd00,          // yellow outline for leaves
     forward: "#00ff88", back: "#ffdd33",
     selected: "#ffffff", faded: "rgba(100,100,100,0.08)",
     hidden: "rgba(0,0,0,0)"
@@ -40,7 +41,7 @@
   }
 
   function pickBiasedParent() {
-    // 35% of the time, pick from extras+down to encourage more red growth
+    // 35% bias: try to grow branches under extras/downlines so more red appears
     const redPool = nodes.filter(n => n.type === "extra" || n.type === "down");
     if (redPool.length && Math.random() < 0.35) {
       return redPool[Math.floor(Math.random() * redPool.length)];
@@ -70,22 +71,7 @@
       links.push({ source: parent.id, target: child.id });
     }
 
-    // Post-pass: try to give childless EXTRAS one child (DOWN) without exceeding total cap
-    let remainingSlots = Math.max(0, total - nodes.length);
-    const childlessExtras = nodes.filter(n => n.type === "extra" && n.children.length === 0);
-    for (const ex of childlessExtras) {
-      if (remainingSlots <= 0) break;
-      // 60% chance to ensure they spawn one child
-      if (Math.random() < 0.6) {
-        const child = { id:id++, type:"down", donation:randomDonation(), children:[], parent: ex.id, inactive:false };
-        nodes.push(child); byId.set(child.id, child);
-        ex.children.push(child.id);
-        links.push({ source: ex.id, target: child.id });
-        remainingSlots--;
-      }
-    }
-
-    // Mark leaves as inactive **without changing their type**
+    // Mark leaves as inactive (boolean) WITHOUT changing their type/color
     nodes.forEach(n => { n.inactive = (n.children.length === 0); });
 
     // donation range for heat colors
@@ -180,6 +166,8 @@
   }
 
   function nodeIsVisibleByType(n){
+    // Use "inactive" as a filter key to show/hide leaf outlines;
+    // the node’s fill color always comes from its true type or heat.
     const key = n.inactive ? "inactive" : n.type;
     return visibleTypes.has(key);
   }
@@ -198,6 +186,59 @@
     Graph.cameraPosition(camPos, lookAt, 800);
   }
 
+  // ------------------------ rendering helpers ------------------------
+  // Radius from current settings
+  function radiusFor(n){
+    if (!nodeShouldDisplay(n)) return 0.001;
+    if (heatByDonation) return Math.max(2, nodeSize * (n.donation / 100));
+    return nodeSize;
+  }
+
+  // Base color for the node (without highlighting/fading)
+  function baseColorFor(n){
+    if (heatByDonation){
+      // gradient: green (min) → yellow → red (max)
+      const t = (n.donation - minDonation) / Math.max(1, (maxDonation - minDonation));
+      const r = Math.floor(255 * t);
+      const g = Math.floor(255 * (1 - 0.3*t));
+      return new THREE.Color(`rgb(${r},${g},60)`);
+    }
+    const map = { root: COLORS.root, primary: COLORS.primary, extra: COLORS.extra, down: COLORS.down };
+    return new THREE.Color(map[n.type] || "#aaaaaa");
+  }
+
+  // Update material/visibility/outline when state changes
+  function updateNodeObject(obj, n){
+    obj.visible = nodeShouldDisplay(n);
+    if (!obj.visible) return;
+
+    // scale the sphere (base sphere at radius 1)
+    const r = Math.max(0.001, radiusFor(n));
+    obj.scale.set(r, r, r);
+
+    // choose display color considering selection state
+    let color = baseColorFor(n);
+    if (selectedNode){
+      if (!highlightNodes.has(n.id)) {
+        color = new THREE.Color(COLORS.faded);
+      } else if (n.id === selectedNode.id){
+        color = new THREE.Color(COLORS.selected);
+      }
+    }
+    const mesh = obj.getObjectByName("__fill");
+    if (mesh && mesh.material && mesh.material.color) {
+      mesh.material.color.copy(color);
+    }
+
+    // outline only for leaves
+    const outline = obj.getObjectByName("__outline");
+    if (outline){
+      outline.visible = !!n.inactive;
+      // keep outline slightly larger than fill
+      outline.scale.set(1.18, 1.18, 1.18);
+    }
+  }
+
   // ------------------------ draw ------------------------
   function draw({nodes, links}){
     Graph = ForceGraph3D()(container)
@@ -214,35 +255,30 @@
             <b>Bloodline Total:</b> ${money(total)}
           </div>`;
       })
-      .nodeVal(n => {
-        if (!nodeShouldDisplay(n)) return 0.001;
-        if (heatByDonation){
-          // Multiply base size by donation factor (e.g., 50→0.5x ... 5000→50x relative to /100)
-          return Math.max(2, nodeSize * (n.donation / 100));
-        }
-        return nodeSize;
-      })
-      .nodeColor(n => {
-        if (!nodeShouldDisplay(n)) return COLORS.hidden;
+      // Custom 3D object so we can draw a leaf-outline
+      .nodeThreeObject(n => {
+        // base sphere at radius 1, we’ll scale it in update
+        const geo = new THREE.SphereGeometry(1, 10, 10);
+        const mat = new THREE.MeshPhongMaterial({ color: baseColorFor(n), shininess: 12 });
+        const sphere = new THREE.Mesh(geo, mat);
+        sphere.name = "__fill";
 
-        if (heatByDonation){
-          // gradient: green (min) → yellow → red (max)
-          const t = (n.donation - minDonation) / Math.max(1, (maxDonation - minDonation));
-          const r = Math.floor(255 * t);
-          const g = Math.floor(255 * (1 - 0.3*t)); // keep some green at high values
-          return `rgb(${r},${g},60)`;
-        }
+        const group = new THREE.Group();
+        group.add(sphere);
 
-        const baseColor = n.inactive ? COLORS.inactive : (COLORS[n.type] || "#aaa");
-        if (selectedNode) {
-          if (highlightNodes.has(n.id)) {
-            if (n.id === selectedNode.id) return COLORS.selected;
-            return baseColor;
-          }
-          return COLORS.faded;
-        }
-        return baseColor;
+        // yellow wireframe outline (hidden until we mark leaf)
+        const wireGeo = new THREE.SphereGeometry(1.01, 10, 10);
+        const wireMat = new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true, transparent: true, opacity: 0.95 });
+        const outline = new THREE.Mesh(wireGeo, wireMat);
+        outline.name = "__outline";
+        outline.visible = !!n.inactive;
+        group.add(outline);
+
+        // initial size/color
+        updateNodeObject(group, n);
+        return group;
       })
+      .nodeThreeObjectUpdate(updateNodeObject)
       .linkColor(l => {
         const src = l.source, tgt = l.target;
         const show = nodeShouldDisplay(src) && nodeShouldDisplay(tgt);
@@ -326,7 +362,7 @@
     <span style="color:${COLORS.primary}">●</span> Primary<br>
     <span style="color:${COLORS.extra}">●</span> Extra<br>
     <span style="color:${COLORS.down}">●</span> Downline<br>
-    <span style="color:${COLORS.inactive}">●</span> Inactive (new donor)<br>
+    <span style="color:#ffdd00">◌</span> Leaf outline (inactive)<br>
     <span style="color:${COLORS.forward}">●</span> Forward path<br>
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
@@ -398,7 +434,7 @@
   });
 
   const TYPES = [
-    ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive"]
+    ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive (leaf outline)"]
   ];
 
   TYPES.forEach(([key,label])=>{
