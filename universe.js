@@ -126,6 +126,7 @@
         return `
           <div>
             <b>${n.type.toUpperCase()}</b><br/>
+            Coin #: ${n.id}<br/>
             Donation: $${n.donation}<br/>
             ${total ? `<b>Bloodline Total:</b> $${total}` : ""}
           </div>`;
@@ -161,6 +162,13 @@
     // ESC to reset
     window.addEventListener("keydown", ev => {
       if (ev.key === "Escape") clearHighlights();
+    });
+
+    // After engine settles, honor any ?find= query
+    Graph.onEngineStop(() => {
+      const params = new URLSearchParams(location.search);
+      const q = params.get("find");
+      if (q) tryFindAndFocus(q);
     });
   }
 
@@ -224,6 +232,63 @@
     <span style="color:${COLORS.back}">●</span> Backtrace<br>
   `;
   document.body.appendChild(legend);
+
+  // --- Finder UI (top-left above controls)
+  const finder = document.createElement("div");
+  finder.style.position = "absolute";
+  finder.style.left = "20px";
+  finder.style.top = "20px";
+  finder.style.display = "flex";
+  finder.style.gap = ".5rem";
+  finder.style.alignItems = "center";
+  finder.style.background = "rgba(0,0,0,0.6)";
+  finder.style.padding = "10px";
+  finder.style.borderRadius = "8px";
+  finder.innerHTML = `
+    <input id="findInput" inputmode="numeric" pattern="[0-9]*"
+      placeholder="Find coin # (e.g., 2436)"
+      style="width:210px;padding:.5rem .65rem;border-radius:.5rem;border:1px solid #334;background:#0b1220;color:#cfe3ff;">
+    <button id="findBtn" style="padding:.55rem .8rem;border-radius:.5rem;border:0;background:#3478f6;color:#fff;">
+      Find
+    </button>
+  `;
+  document.body.appendChild(finder);
+
+  const findInput = finder.querySelector("#findInput");
+  const findBtn = finder.querySelector("#findBtn");
+  findBtn.addEventListener("click", () => tryFindAndFocus(findInput.value));
+  findInput.addEventListener("keydown", (e) => { if (e.key === "Enter") tryFindAndFocus(findInput.value); });
+
+  function tryFindAndFocus(raw) {
+    const id = Number(String(raw || "").replace(/\D/g, ""));
+    if (!id && id !== 0) return pulse(findInput, "#ff6b6b");
+
+    const node = nodes.find(n => n.id === id);
+    if (!node) return pulse(findInput, "#ffb020");
+
+    // If layout hasn't assigned coordinates yet, wait for it
+    const waitForPos = () => (Number.isFinite(node.x) ? Promise.resolve() :
+      new Promise(res => setTimeout(() => res(waitForPos()), 120)));
+    waitForPos().then(() => {
+      highlightPath(node);
+      // camera fly-to with a small offset to frame the node
+      const dist = 40; // adjust for your scene scale
+      const lookAt = { x: node.x, y: node.y, z: node.z };
+      const camPos = {
+        x: node.x + dist,
+        y: node.y + dist * 0.8,
+        z: node.z + dist
+      };
+      Graph.cameraPosition(camPos, lookAt, 900);
+      pulse(findInput, "#00ff9c");
+    });
+  }
+
+  function pulse(el, color) {
+    const old = el.style.boxShadow;
+    el.style.boxShadow = `0 0 0 3px ${color}55`;
+    setTimeout(() => (el.style.boxShadow = old), 450);
+  }
 
   // --- Run
   const data = generateUniverse(3200, 250);
