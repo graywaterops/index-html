@@ -6,29 +6,31 @@
   let nodes = [], links = [];
   let byId = new Map();
 
+  // selection/highlight
   let highlightNodes = new Set(), highlightLinks = new Set();
   let selectedNode = null;
 
-  // state
+  // view state
   let nodeSize = 4;
   let universeSpread = 60;
   let zoomDist = 90;
   let heatByDonation = false;
   let isolateView = false;
-  const visibleTypes = new Set(["root","primary","extra","down","inactive"]);
+  const visibleTypes = new Set(["root","primary","extra","down","inactive"]); // "inactive" toggles leaf outline visibility
 
+  // donation range (for heat)
   let minDonation = 0, maxDonation = 1;
 
   const COLORS = {
     root: "#1f4aa8", primary: "#7cc3ff", extra: "#2ecc71", down: "#e74c3c",
-    inactiveOutline: 0xffdd00,
+    inactiveOutline: 0xffdd00,  // leaf outline
     forward: "#00ff88", back: "#ffdd33",
     selected: "#ffffff", faded: "rgba(100,100,100,0.08)", hidden: "rgba(0,0,0,0)"
   };
 
   const money = v => `$${(v||0).toLocaleString()}`;
 
-  // ------------------------ data generation ------------------------
+  // ---------------- data generation ----------------
   function randomDonation() {
     const r = Math.random();
     if (r < 0.75) return Math.floor(50 + Math.random() * 50);
@@ -36,15 +38,16 @@
     return Math.floor(500 + Math.random() * 4500);
   }
 
+  // Bias: sometimes grow under extras/downlines to create more red
   function pickBiasedParent() {
-    const redPool = nodes.filter(n => n.type === "extra" || n.type === "down");
-    if (redPool.length && Math.random() < 0.35) {
-      return redPool[Math.floor(Math.random() * redPool.length)];
+    const pool = nodes.filter(n => n.type === "extra" || n.type === "down");
+    if (pool.length && Math.random() < 0.35) {
+      return pool[Math.floor(Math.random() * pool.length)];
     }
     return nodes[Math.floor(Math.random() * nodes.length)];
   }
 
-  function generateUniverse(total = 1000, seedRoots = 250) {
+  function generateUniverse(total = 3200, seedRoots = 250) {
     nodes = []; links = []; byId = new Map();
     let id = 0;
 
@@ -62,7 +65,7 @@
       const child = { id:id++, type, donation, children:[], parent: parent.id, inactive:false };
       nodes.push(child); byId.set(child.id, child);
       parent.children.push(child.id);
-      links.push({ source: parent.id, target: child.id });
+      links.push({ source: parent.id, target: child.id }); // numeric ids on purpose
     }
 
     nodes.forEach(n => { n.inactive = (n.children.length === 0); });
@@ -73,7 +76,7 @@
     return { nodes, links };
   }
 
-  // ------------------------ helpers ------------------------
+  // ---------------- metrics ----------------
   function getBloodlineTotal(rootId){
     let total = 0; const seen = new Set();
     (function dfs(id){
@@ -106,105 +109,358 @@
     return rows;
   }
 
-  // ------------------------ rendering ------------------------
-  function radiusFor(n){ return heatByDonation? Math.max(2,nodeSize*(n.donation/100)):nodeSize; }
+  // ---------------- rendering helpers ----------------
+  function radiusFor(n){
+    if (!nodeShouldDisplay(n)) return 0.001;
+    if (heatByDonation) return Math.max(2, nodeSize * (n.donation / 100));
+    return nodeSize;
+  }
+
   function baseColorFor(n){
     if (heatByDonation){
-      const t=(n.donation-minDonation)/Math.max(1,(maxDonation-minDonation));
-      const r=Math.floor(255*t); const g=Math.floor(255*(1-0.3*t));
-      return new THREE.Color(`rgb(${r},${g},60)`);
+      const t = (n.donation - minDonation) / Math.max(1, (maxDonation - minDonation));
+      const r = Math.floor(255 * t);
+      const g = Math.floor(255 * (1 - 0.3*t));
+      return new THREE.Color(`rgb(${r},${g},60)`); // green→yellow→red
     }
-    const map={root:COLORS.root, primary:COLORS.primary, extra:COLORS.extra, down:COLORS.down};
-    return new THREE.Color(map[n.type]||"#aaa");
+    const map = { root: COLORS.root, primary: COLORS.primary, extra: COLORS.extra, down: COLORS.down };
+    return new THREE.Color(map[n.type] || "#aaaaaa");
   }
 
   function makeNodeObject(n){
-    const r=radiusFor(n);
-    const group=new THREE.Group();
+    const r = Math.max(0.001, radiusFor(n));
+    const group = new THREE.Group();
 
-    const geo=new THREE.SphereGeometry(1,12,12);
-    const mat=new THREE.MeshBasicMaterial({color:baseColorFor(n)});
-    const sphere=new THREE.Mesh(geo,mat); sphere.name="__fill";
-    sphere.scale.set(r,r,r);
-    group.add(sphere);
+    // fill sphere (self-lit)
+    const geo = new THREE.SphereGeometry(1, 12, 12);
+    const mat = new THREE.MeshBasicMaterial({ color: baseColorFor(n) });
+    const fill = new THREE.Mesh(geo, mat);
+    fill.name = "__fill";
+    fill.scale.set(r, r, r);
+    group.add(fill);
 
-    if(n.inactive){
-      const wireGeo=new THREE.SphereGeometry(1.01,12,12);
-      const wireMat=new THREE.MeshBasicMaterial({color:COLORS.inactiveOutline,wireframe:true});
-      const outline=new THREE.Mesh(wireGeo,wireMat); outline.name="__outline";
-      outline.scale.set(r*1.18,r*1.18,r*1.18);
-      group.add(outline);
-    }
+    // yellow wireframe outline for leaves
+    const wire = new THREE.Mesh(
+      new THREE.SphereGeometry(1.01, 12, 12),
+      new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true, transparent: true, opacity: 0.95 })
+    );
+    wire.name = "__outline";
+    wire.visible = !!n.inactive;
+    wire.scale.set(r*1.18, r*1.18, r*1.18);
+    group.add(wire);
+
+    group.visible = nodeShouldDisplay(n);
     return group;
   }
 
-  function updateNodeObject(obj,n){
-    obj.visible=nodeShouldDisplay(n);
-    if(!obj.visible) return;
-    const r=radiusFor(n);
+  function updateNodeObject(obj, n){
+    obj.visible = nodeShouldDisplay(n);
+    if (!obj.visible) return;
 
-    const fill=obj.getObjectByName("__fill");
-    if(fill){
-      let color=baseColorFor(n);
-      if(selectedNode){
-        if(!highlightNodes.has(n.id)) color=new THREE.Color(COLORS.faded);
-        else if(n.id===selectedNode.id) color=new THREE.Color(COLORS.selected);
+    const r = Math.max(0.001, radiusFor(n));
+    const fill = obj.getObjectByName("__fill");
+    const outline = obj.getObjectByName("__outline");
+
+    if (fill){
+      let color = baseColorFor(n);
+      if (selectedNode){
+        if (!highlightNodes.has(n.id)) color = new THREE.Color(COLORS.faded);
+        else if (n.id === selectedNode.id) color = new THREE.Color(COLORS.selected);
       }
       fill.material.color.copy(color);
-      fill.scale.set(r,r,r);
+      fill.scale.set(r, r, r);
     }
-
-    const outline=obj.getObjectByName("__outline");
-    if(outline){ outline.visible=!!n.inactive; outline.scale.set(r*1.18,r*1.18,r*1.18); }
+    if (outline){
+      outline.visible = !!n.inactive;
+      outline.scale.set(r*1.18, r*1.18, r*1.18);
+    }
   }
 
-  // ------------------------ highlight / camera ------------------------
-  function clearHighlights(){ highlightNodes.clear(); highlightLinks.clear(); selectedNode=null;
-    if(statusEl) statusEl.textContent=`Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    Graph.refresh(); updateExportState(); syncQuery(); }
+  // ---------------- selection / camera ----------------
+  function clearHighlights(){
+    highlightNodes.clear();
+    highlightLinks.clear();
+    selectedNode = null;
+    if (statusEl) statusEl.textContent =
+      `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    Graph.refresh();
+    updateExportState();
+    syncQuery();
+  }
+
   function highlightPath(node){
-    highlightNodes.clear(); highlightLinks.clear(); selectedNode=node;
-    const visitDown=id=>{ highlightNodes.add(id); links.forEach(l=>{ if(l.source.id===id){ highlightLinks.add(l); visitDown(l.target.id);} });};
-    const visitUp=id=>{ links.forEach(l=>{ if(l.target.id===id){ highlightLinks.add(l); highlightNodes.add(l.source.id); visitUp(l.source.id);} });};
-    visitDown(node.id); visitUp(node.id);
-    const stats=getSubtreeStats(node.id);
-    if(statusEl) statusEl.textContent=`Focused coin #${node.id} — subtree: ${stats.count} donors, ${money(stats.total)} total, depth ${stats.depth}. (ESC to reset)`;
-    Graph.refresh(); updateExportState(); focusCamera(node); syncQuery();
-  }
-  function nodeIsVisibleByType(n){ const key=n.inactive?"inactive":n.type; return visibleTypes.has(key); }
-  function nodeShouldDisplay(n){ if(!nodeIsVisibleByType(n)) return false; if(isolateView && selectedNode) return highlightNodes.has(n.id); return true; }
-  function focusCamera(node){ if(!node) return;
-    const dist=zoomDist; const lookAt={x:node.x,y:node.y,z:node.z};
-    const camPos={x:node.x+dist,y:node.y+dist*0.8,z:node.z+dist};
-    Graph.cameraPosition(camPos,lookAt,800); }
+    highlightNodes.clear();
+    highlightLinks.clear();
+    selectedNode = node;
 
-  // ------------------------ draw ------------------------
-  function draw({nodes,links}){
-    Graph=ForceGraph3D()(container)
+    // NOTE: our local links use numeric ids for source/target
+    const visitDown = (id) => {
+      highlightNodes.add(id);
+      links.forEach(l => {
+        if (l.source === id) { // safe: numeric
+          highlightLinks.add(l);
+          visitDown(l.target);
+        }
+      });
+    };
+    const visitUp = (id) => {
+      links.forEach(l => {
+        if (l.target === id) { // safe: numeric
+          highlightLinks.add(l);
+          highlightNodes.add(l.source);
+          visitUp(l.source);
+        }
+      });
+    };
+
+    visitDown(node.id);
+    visitUp(node.id);
+
+    const stats = getSubtreeStats(node.id);
+    if (statusEl){
+      statusEl.textContent =
+        `Focused coin #${node.id} — subtree: ${stats.count} donors, ${money(stats.total)} total, depth ${stats.depth}. (ESC to reset)`;
+    }
+    Graph.refresh();
+    updateExportState();
+    focusCamera(node);
+    syncQuery();
+  }
+
+  function nodeIsVisibleByType(n){
+    const key = n.inactive ? "inactive" : n.type;
+    return visibleTypes.has(key);
+  }
+  function nodeShouldDisplay(n){
+    if (!nodeIsVisibleByType(n)) return false;
+    if (isolateView && selectedNode) return highlightNodes.has(n.id);
+    return true;
+  }
+
+  function focusCamera(node){
+    if (!node) return;
+    const dist = zoomDist;
+    Graph.cameraPosition(
+      { x: node.x + dist, y: node.y + dist*0.8, z: node.z + dist },
+      { x: node.x,        y: node.y,            z: node.z },
+      800
+    );
+  }
+
+  // ---------------- draw ----------------
+  function draw({nodes, links}) {
+    Graph = ForceGraph3D()(container)
       .backgroundColor("#000")
       .nodeThreeObject(makeNodeObject)
       .nodeThreeObjectUpdate(updateNodeObject)
-      .nodeLabel(n=>{ const total=getBloodlineTotal(n.id); const key=n.inactive?"inactive":n.type;
-        return `<div><b>${key.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`; })
-      .linkColor(l=>{ const src=l.source,tgt=l.target,show=nodeShouldDisplay(src)&&nodeShouldDisplay(tgt);
-        if(!show) return COLORS.hidden; if(selectedNode) return highlightLinks.has(l)?COLORS.forward:COLORS.faded;
-        return "rgba(180,180,180,0.2)"; })
-      .linkWidth(l=>(highlightLinks.has(l)?2.2:0.4))
+      .nodeLabel(n => {
+        const total = getBloodlineTotal(n.id);
+        const key = n.inactive ? "inactive" : n.type;
+        return `<div><b>${key.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
+      })
+      .linkColor(l => {
+        // SAFE access whether source/target are numbers or objects
+        const srcId = typeof l.source === "object" ? l.source.id : l.source;
+        const tgtId = typeof l.target === "object" ? l.target.id : l.target;
+        const srcNode = byId.get(srcId), tgtNode = byId.get(tgtId);
+        const show = nodeShouldDisplay(srcNode) && nodeShouldDisplay(tgtNode);
+        if (!show) return COLORS.hidden;
+        if (selectedNode) return highlightLinks.has(l) ? COLORS.forward : COLORS.faded;
+        return "rgba(180,180,180,0.2)";
+      })
+      .linkWidth(l => (highlightLinks.has(l) ? 2.2 : 0.4))
       .onNodeClick(highlightPath)
-      .d3Force("charge",d3.forceManyBody().strength(-universeSpread))
-      .d3Force("link",d3.forceLink().distance(universeSpread).strength(0.4))
-      .d3Force("center",d3.forceCenter(0,0,0));
+      .d3Force("charge", d3.forceManyBody().strength(-universeSpread))
+      .d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4))
+      .d3Force("center", d3.forceCenter(0,0,0));
 
-    Graph.graphData({nodes,links});  // <-- ensure data is applied AFTER custom renderers
+    // IMPORTANT: apply data AFTER renderers are configured
+    Graph.graphData({ nodes, links });
 
-    if(statusEl) statusEl.textContent=`Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
-    window.addEventListener("keydown",ev=>{ if(ev.key==="Escape") clearHighlights(); });
+    if (statusEl) {
+      statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
+    }
+
+    // ESC to reset
+    window.addEventListener("keydown", ev => { if (ev.key === "Escape") clearHighlights(); });
   }
 
-  // ------------------------ UI overlays (controls, legend, topbar, filters) ------------------------
-  // [KEEP your overlays code here exactly as before — unchanged]
+  // ---------------- overlays ----------------
+  const controls = document.createElement("div");
+  Object.assign(controls.style, {
+    position:"absolute", left:"20px", bottom:"20px",
+    background:"rgba(0,0,0,0.6)", color:"#fff",
+    padding:"10px", borderRadius:"8px", lineHeight:"1.1"
+  });
 
-  // ------------------------ run ------------------------
-  const data=generateUniverse(3200,250);
+  const lbl1 = document.createElement("label"); lbl1.textContent="Node Size:"; lbl1.style.display="block";
+  const sliderNode = document.createElement("input");
+  sliderNode.type="range"; sliderNode.min=2; sliderNode.max=12; sliderNode.value=nodeSize;
+  sliderNode.oninput = e => { nodeSize = +e.target.value; Graph.refresh(); syncQuery(); };
+  controls.append(lbl1, sliderNode, document.createElement("br"));
+
+  const lbl2 = document.createElement("label"); lbl2.textContent="Universe Spread:"; lbl2.style.display="block";
+  const sliderSpread = document.createElement("input");
+  sliderSpread.type="range"; sliderSpread.min=20; sliderSpread.max=160; sliderSpread.value=universeSpread;
+  sliderSpread.oninput = e => {
+    universeSpread = +e.target.value;
+    Graph.d3Force("charge", d3.forceManyBody().strength(-universeSpread));
+    Graph.d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4));
+    Graph.numDimensions(3);
+    Graph.refresh(); syncQuery();
+  };
+  controls.append(lbl2, sliderSpread, document.createElement("br"));
+
+  const lbl3 = document.createElement("label"); lbl3.textContent="Zoom Distance:"; lbl3.style.display="block";
+  const sliderZoom = document.createElement("input");
+  sliderZoom.type="range"; sliderZoom.min=20; sliderZoom.max=250; sliderZoom.value=zoomDist;
+  sliderZoom.oninput = e => { zoomDist = +e.target.value; syncQuery(); };
+  controls.append(lbl3, sliderZoom);
+
+  document.body.appendChild(controls);
+
+  const legend = document.createElement("div");
+  Object.assign(legend.style, {
+    position:"absolute", top:"10px", right:"10px",
+    background:"rgba(0,0,0,0.7)", color:"#fff",
+    padding:"10px", borderRadius:"6px"
+  });
+  legend.innerHTML = `
+    <b>Legend</b><br>
+    <span style="color:${COLORS.root}">●</span> Root<br>
+    <span style="color:${COLORS.primary}">●</span> Primary<br>
+    <span style="color:${COLORS.extra}">●</span> Extra<br>
+    <span style="color:${COLORS.down}">●</span> Downline<br>
+    <span style="color:#ffdd00">◌</span> Leaf outline (inactive)<br>
+    <span style="color:${COLORS.forward}">●</span> Forward path<br>
+    <span style="color:${COLORS.back}">●</span> Backtrace<br>
+  `;
+  document.body.appendChild(legend);
+
+  const topbar = document.createElement("div");
+  Object.assign(topbar.style, {
+    position:"absolute", left:"20px", top:"20px",
+    display:"flex", gap:".5rem", alignItems:"center",
+    background:"rgba(0,0,0,0.6)", padding:"10px", borderRadius:"8px", color:"#fff"
+  });
+  topbar.innerHTML = `
+    <input id="findInput" inputmode="numeric" pattern="[0-9]*"
+      placeholder="Find coin # (e.g., 2436)"
+      style="width:210px;padding:.5rem .65rem;border-radius:.5rem;border:1px solid #334;background:#0b1220;color:#cfe3ff;">
+    <button id="findBtn" style="padding:.55rem .8rem;border-radius:.5rem;border:0;background:#3478f6;color:#fff;">Find</button>
+    <label style="display:flex;gap:.35rem;align-items:center;">
+      <input type="checkbox" id="heatChk"> Heat by $ </label>
+    <label style="display:flex;gap:.35rem;align-items:center;">
+      <input type="checkbox" id="isolateChk"> Isolate subtree </label>
+    <button id="exportBtn" style="padding:.45rem .7rem;border-radius:.5rem;border:1px solid #444;background:#0b1220;color:#cfe3ff;opacity:.6;cursor:not-allowed;">
+      Export CSV
+    </button>
+  `;
+  document.body.appendChild(topbar);
+
+  const findInput = topbar.querySelector("#findInput");
+  const findBtn   = topbar.querySelector("#findBtn");
+  const heatChk   = topbar.querySelector("#heatChk");
+  const isolateChk= topbar.querySelector("#isolateChk");
+  const exportBtn = topbar.querySelector("#exportBtn");
+
+  findBtn.addEventListener("click", () => tryFindAndFocus(findInput.value));
+  findInput.addEventListener("keydown", e => { if (e.key === "Enter") tryFindAndFocus(findInput.value); });
+  heatChk.addEventListener("change", e => { heatByDonation = !!e.target.checked; Graph.refresh(); syncQuery(); });
+  isolateChk.addEventListener("change", e => { isolateView = !!e.target.checked; Graph.refresh(); syncQuery(); });
+
+  function updateExportState(){
+    if (selectedNode){
+      exportBtn.style.opacity = "1"; exportBtn.style.cursor = "pointer";
+      exportBtn.disabled = false;
+    } else {
+      exportBtn.style.opacity = ".6"; exportBtn.style.cursor = "not-allowed";
+      exportBtn.disabled = true;
+    }
+  }
+
+  exportBtn.addEventListener("click", () => {
+    if (!selectedNode) return;
+    const rows = collectSubtree(selectedNode.id);
+    const header = "coin_id,type,donation,parent_id,inactive\n";
+    const body = rows.map(r => `${r.id},${r.type},${r.donation},${r.parent??""},${r.inactive}`).join("\n");
+    const blob = new Blob([header+body], {type:"text/csv"});
+    const url  = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `subtree_${selectedNode.id}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  });
+
+  const filters = document.createElement("div");
+  Object.assign(filters.style, {
+    position:"absolute", left:"20px", top:"78px",
+    background:"rgba(0,0,0,0.6)", color:"#fff", padding:"8px 10px",
+    borderRadius:"8px", display:"grid", gridTemplateColumns:"auto auto", gap:"6px 16px"
+  });
+  const TYPES = [
+    ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive (leaf outline)"]
+  ];
+  TYPES.forEach(([key,label])=>{
+    const w = document.createElement("label");
+    w.style.display="flex"; w.style.alignItems="center"; w.style.gap=".35rem";
+    const c = document.createElement("input"); c.type="checkbox"; c.checked = true;
+    c.addEventListener("change", ()=>{ if (c.checked) visibleTypes.add(key); else visibleTypes.delete(key); Graph.refresh(); syncQuery(); });
+    w.appendChild(c); w.appendChild(document.createTextNode(label));
+    filters.appendChild(w);
+  });
+  document.body.appendChild(filters);
+
+  // ---------------- find / URL state ----------------
+  function tryFindAndFocus(raw){
+    const id = Number(String(raw||"").replace(/\D/g,""));
+    if (!Number.isFinite(id)) return pulse(findInput,"#ff6b6b");
+
+    const node = byId.get(id);
+    if (!node) return pulse(findInput,"#ffb020");
+
+    const wait = () => (Number.isFinite(node.x) ? Promise.resolve()
+      : new Promise(res => setTimeout(() => res(wait()), 80)));
+
+    wait().then(()=>{ highlightPath(node); pulse(findInput, "#00ff9c"); });
+  }
+
+  function pulse(el, color){
+    const old = el.style.boxShadow;
+    el.style.boxShadow = `0 0 0 3px ${color}55`;
+    setTimeout(()=> el.style.boxShadow = old, 450);
+  }
+
+  function applyQuery(){
+    const p = new URLSearchParams(location.search);
+    const qSize = +p.get("size");     if (qSize)  { nodeSize = qSize; sliderNode.value = nodeSize; }
+    const qSpread = +p.get("spread"); if (qSpread){ universeSpread = qSpread; sliderSpread.value = universeSpread; }
+    const qZoom = +p.get("zoom");     if (qZoom)  { zoomDist = qZoom; sliderZoom.value = zoomDist; }
+    const qIsolate = p.get("isolate");if (qIsolate === "1"){ isolateView = true; isolateChk.checked = true; }
+    const qHeat = p.get("heat");      if (qHeat === "1"){ heatByDonation = true; heatChk.checked = true; }
+    const qTypes = p.get("types");
+    if (qTypes){
+      visibleTypes.clear();
+      qTypes.split(",").forEach(t => { if (t) visibleTypes.add(t); });
+      Array.from(filters.querySelectorAll("input[type=checkbox]")).forEach((cb,i)=>{
+        const key = TYPES[i][0]; cb.checked = visibleTypes.has(key);
+      });
+    }
+  }
+
+  function syncQuery(){
+    const p = new URLSearchParams(location.search);
+    if (selectedNode) p.set("find", selectedNode.id); else p.delete("find");
+    p.set("size", String(nodeSize));
+    p.set("spread", String(universeSpread));
+    p.set("zoom", String(zoomDist));
+    p.set("isolate", isolateView ? "1" : "0");
+    p.set("heat", heatByDonation ? "1" : "0");
+    p.set("types", Array.from(visibleTypes).join(","));
+    window.history.replaceState({}, "", `${location.pathname}?${p.toString()}`);
+  }
+
+  // ---------------- run ----------------
+  const data = generateUniverse(3200, 250);
   draw(data);
+  applyQuery();
 })();
