@@ -33,6 +33,7 @@
     const statusEl  = document.getElementById("status");
 
     const THREE = window.THREE; // guaranteed by ensureLibs()
+    const ForceGraph3D = window.ForceGraph3D;
 
     let Graph;
     let nodes = [], links = [];
@@ -49,16 +50,21 @@
     let zoomDist = 90;
     let heatByDonation = false;
     let isolateView = false;
-    const visibleTypes = new Set(["root","primary","extra","down","inactive"]);
+
+    // Show/hide types (real types only)
+    const visibleTypes = new Set(["root","primary","extra","down"]);
+
+    // Leaf outline toggle (yellow ring)
+    let showLeafOutline = true;
 
     // donation range (for heat)
     let minDonation = 0, maxDonation = 1;
 
     const COLORS = {
       root: "#1f4aa8", primary: "#7cc3ff", extra: "#2ecc71", down: "#e74c3c",
-      inactiveOutline: 0xffdd00,
+      inactiveOutline: 0xffdd00,         // yellow ring for leaves
       forward: "#00ff88", back: "#ffdd33",
-      selected: "#ffffff", faded: "rgba(100,100,100,0.08)", hidden: "rgba(0,0,0,0)"
+      selected: "#ffffff", faded: "rgba(100,100,100,0.18)", hidden: "rgba(0,0,0,0)"
     };
 
     const money = v => `$${(v||0).toLocaleString()}`;
@@ -90,9 +96,9 @@
         const child={id:id++, type, donation, children:[], parent:parent.id, inactive:false};
         nodes.push(child); byId.set(child.id,child);
         parent.children.push(child.id);
-        links.push({source:parent.id, target:child.id}); // keep numeric ids
+        links.push({source:parent.id, target:child.id}); // numeric ids
       }
-      nodes.forEach(n=>{ n.inactive=(n.children.length===0); });
+      nodes.forEach(n=>{ n.inactive=(n.children.length===0); }); // flag leaves
       minDonation=Math.min(...nodes.map(n=>n.donation));
       maxDonation=Math.max(...nodes.map(n=>n.donation));
       return {nodes,links};
@@ -129,17 +135,16 @@
     }
     function baseColorFor(n){
       if (heatByDonation){
+        // green (min) → yellow → red (max)
         const t=(n.donation-minDonation)/Math.max(1,(maxDonation-minDonation));
         const r=Math.floor(255*t), g=Math.floor(255*(1-0.3*t));
-        return new THREE.Color(`rgb(${r},${g},60)`); // green→yellow→red
+        return new THREE.Color(`rgb(${r},${g},60)`);
       }
+      // Typed colors (default)
       const map={root:COLORS.root, primary:COLORS.primary, extra:COLORS.extra, down:COLORS.down};
-      return new THREE.Color(map[n.type]||"#aaa");
+      return new THREE.Color(map[n.type]||"#aaaaaa");
     }
-    function nodeIsVisibleByType(n){
-      const key = n.inactive ? "inactive" : n.type;
-      return visibleTypes.has(key);
-    }
+    function nodeIsVisibleByType(n){ return visibleTypes.has(n.type); }
     function nodeShouldDisplay(n){
       if(!n) return true; // defensive during hydration
       if(!nodeIsVisibleByType(n)) return false;
@@ -180,7 +185,7 @@
       Graph = ForceGraph3D()(container)
         .backgroundColor("#000")
         .nodeThreeObject(n => {
-          // Create once; store refs so we can update later
+          // Create once; keep refs for updates
           const group = new THREE.Group();
           const fill = new THREE.Mesh(
             new THREE.SphereGeometry(1, 12, 12),
@@ -190,22 +195,20 @@
           group.add(fill);
 
           const outline = new THREE.Mesh(
-            new THREE.SphereGeometry(1.01, 12, 12),
+            new THREE.SphereGeometry(1.02, 12, 12),
             new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true, transparent: true, opacity: 0.95 })
           );
           outline.name = "__outline";
           group.add(outline);
 
-          // stash refs on node for updates
-          n.__obj = group;
-          n.__fill = fill;
-          n.__outline = outline;
+          // stash refs
+          n.__obj = group; n.__fill = fill; n.__outline = outline;
 
           return group;
         })
         .nodeLabel(n=>{
-          const total=getBloodlineTotal(n.id); const key=n.inactive?"inactive":n.type;
-          return `<div><b>${key.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
+          const total=getBloodlineTotal(n.id); 
+          return `<div><b>${n.type.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
         })
         .linkColor(l=>{
           const srcId=typeof l.source==="object"?l.source.id:l.source;
@@ -218,13 +221,17 @@
         })
         .linkWidth(l => (highlightLinkKeys.has(linkKey(l)) ? 2.2 : 0.4))
         .onNodeClick(highlightPath)
-        .d3Force("charge", d3.forceManyBody().strength(-universeSpread))
-        .d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4))
-        .d3Force("center", d3.forceCenter(0,0,0))
-        .graphData({nodes,links});
+        .graphData({nodes,links}); // apply data
 
-      // After first render, size/color/visibility pass
-      setTimeout(() => { updateAllNodeObjects(); Graph.refresh(); }, 0);
+      // Configure forces without global d3
+      try {
+        Graph.d3Force('charge').strength(-universeSpread);
+        Graph.d3Force('link').distance(universeSpread).strength(0.4);
+      } catch (_) { /* fallback if not exposed */ }
+
+      // First paint pass
+      updateAllNodeObjects();
+      Graph.refresh();
 
       if(statusEl) statusEl.textContent=`Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
       window.addEventListener("keydown",ev=>{ if(ev.key==="Escape") clearHighlights(); });
@@ -239,19 +246,22 @@
         // visibility (filters / isolate)
         obj.visible = nodeShouldDisplay(n);
 
+        // radius
         const r = Math.max(0.001, radiusFor(n));
 
         // color with selection/fade logic
-        let color = baseColorFor(n);
+        let color = baseColorFor(n); // typed or heat
         if (selectedNode){
           if (!highlightNodes.has(n.id)) color = new THREE.Color(COLORS.faded);
           else if (n.id === selectedNode.id) color = new THREE.Color(COLORS.selected);
         }
         fill.material.color.copy(color);
 
-        // scale spheres
+        // scale
         fill.scale.set(r, r, r);
-        outline.visible = !!n.inactive;
+
+        // leaf outline visibility
+        outline.visible = showLeafOutline && !!n.inactive;
         outline.scale.set(r*1.18, r*1.18, r*1.18);
       });
     }
@@ -276,9 +286,10 @@
     sliderSpread.type="range"; sliderSpread.min=20; sliderSpread.max=160; sliderSpread.value=universeSpread;
     sliderSpread.oninput = e => {
       universeSpread = +e.target.value;
-      Graph.d3Force("charge", d3.forceManyBody().strength(-universeSpread));
-      Graph.d3Force("link",   d3.forceLink().distance(universeSpread).strength(0.4));
-      Graph.numDimensions(3);
+      try {
+        Graph.d3Force("charge").strength(-universeSpread);
+        Graph.d3Force("link").distance(universeSpread).strength(0.4);
+      } catch (_) {}
       Graph.refresh(); syncQuery();
     };
     controls.append(lbl2, sliderSpread, document.createElement("br"));
@@ -363,17 +374,18 @@
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     });
 
-    // Filters (under topbar)
+    // Filters (types + leaf outline toggle)
     const filters = document.createElement("div");
     Object.assign(filters.style, {
       position:"absolute", left:"20px", top:"78px",
       background:"rgba(0,0,0,0.6)", color:"#fff", padding:"8px 10px",
       borderRadius:"8px", display:"grid", gridTemplateColumns:"auto auto", gap:"6px 16px"
     });
-    const TYPES = [
-      ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"],["inactive","Inactive (leaf outline)"]
+
+    const TYPE_ENTRIES = [
+      ["root","Root"],["primary","Primary"],["extra","Extra"],["down","Downline"]
     ];
-    TYPES.forEach(([key,label])=>{
+    TYPE_ENTRIES.forEach(([key,label])=>{
       const w = document.createElement("label");
       w.style.display="flex"; w.style.alignItems="center"; w.style.gap=".35rem";
       const c = document.createElement("input"); c.type="checkbox"; c.checked = true;
@@ -384,6 +396,16 @@
       w.appendChild(c); w.appendChild(document.createTextNode(label));
       filters.appendChild(w);
     });
+
+    // Leaf outline toggle (doesn't hide nodes)
+    const leafWrap = document.createElement("label");
+    leafWrap.style.display="flex"; leafWrap.style.alignItems="center"; leafWrap.style.gap=".35rem";
+    const leafCb = document.createElement("input"); leafCb.type="checkbox"; leafCb.checked = showLeafOutline;
+    leafCb.addEventListener("change", () => { showLeafOutline = leafCb.checked; updateAllNodeObjects(); Graph.refresh(); });
+    leafWrap.appendChild(leafCb);
+    leafWrap.appendChild(document.createTextNode("Inactive (leaf outline)"));
+    filters.appendChild(leafWrap);
+
     document.body.appendChild(filters);
 
     // --------- find + URL state ----------
@@ -400,23 +422,29 @@
       el.style.boxShadow = `0 0 0 3px ${color}55`;
       setTimeout(()=> el.style.boxShadow = old, 450);
     }
+
     function applyQuery(){
       const p = new URLSearchParams(location.search);
       const qSize = +p.get("size");     if (qSize)  { nodeSize = qSize; sliderNode.value = nodeSize; }
       const qSpread = +p.get("spread"); if (qSpread){ universeSpread = qSpread; sliderSpread.value = universeSpread; }
       const qZoom = +p.get("zoom");     if (qZoom)  { zoomDist = qZoom; sliderZoom.value = zoomDist; }
       const qIsolate = p.get("isolate");if (qIsolate === "1"){ isolateView = true; isolateChk.checked = true; }
-      const qHeat = p.get("heat");      if (qHeat === "1"){ heatByDonation = true; heatChk.checked = true; }
+      const qHeat = p.get("heat");      if (qHeat === "1"){ heatByDonation = true; heatChk.checked = true; } else { heatByDonation = false; heatChk.checked = false; }
       const qTypes = p.get("types");
       if (qTypes){
         visibleTypes.clear();
         qTypes.split(",").forEach(t => { if (t) visibleTypes.add(t); });
-        Array.from(filters.querySelectorAll("input[type=checkbox]")).forEach((cb,i)=>{
-          const key = TYPES[i][0]; cb.checked = visibleTypes.has(key);
+        // sync type checkboxes (skip leaf toggle)
+        Array.from(filters.querySelectorAll("input[type=checkbox]")).slice(0, TYPE_ENTRIES.length).forEach((cb,i)=>{
+          const key = TYPE_ENTRIES[i][0]; cb.checked = visibleTypes.has(key);
         });
       }
+      const qLeaf = p.get("leaf");
+      if (qLeaf != null) { showLeafOutline = qLeaf === "1"; leafCb.checked = showLeafOutline; }
+
       updateAllNodeObjects(); Graph.refresh();
     }
+
     function syncQuery(){
       const p = new URLSearchParams(location.search);
       if (selectedNode) p.set("find", selectedNode.id); else p.delete("find");
@@ -426,6 +454,7 @@
       p.set("isolate", isolateView ? "1" : "0");
       p.set("heat", heatByDonation ? "1" : "0");
       p.set("types", Array.from(visibleTypes).join(","));
+      p.set("leaf", showLeafOutline ? "1" : "0");
       window.history.replaceState({}, "", `${location.pathname}?${p.toString()}`);
     }
 
