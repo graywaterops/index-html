@@ -1,6 +1,6 @@
 (() => {
-  // -------- SINGLETON GUARD (prevents double init / duplicate UI) --------
-  if (window.__DG_LOCK__) return;           // already booting: noop
+  // ---------- SINGLETON GUARD ----------
+  if (window.__DG_LOCK__) return;              // already starting
   window.__DG_LOCK__ = true;
 
   if (window.__DG_APP__?.destroy) {
@@ -13,10 +13,11 @@
     topbar:   'dg-topbar',
     filters:  'dg-filters'
   };
-  const $ = (sel) => document.querySelector(sel);
+  const $  = (sel) => document.querySelector(sel);
   const rm = (id) => { const el = document.getElementById(id); if (el) el.remove(); };
 
-  // -------- SAFE LIB LOADER (no double-loads) --------
+  // ---------- LIB LOADER ----------
+  // Do NOT reload THREE – Squarespace already injects it.
   function loadScript(src){
     return new Promise((res, rej) => {
       const s = document.createElement('script');
@@ -26,15 +27,36 @@
     });
   }
   async function ensureLibs(){
-    if (!window.THREE)        await loadScript('https://unpkg.com/three@0.155.0/build/three.min.js');
-    if (!window.ForceGraph3D) await loadScript('https://unpkg.com/3d-force-graph@1.71.6/dist/3d-force-graph.min.js');
+    if (!window.ForceGraph3D) {
+      // Pinned, stable build
+      await loadScript('https://unpkg.com/3d-force-graph@1.71.6/dist/3d-force-graph.min.js');
+    }
+    if (!window.THREE) {
+      // As a last resort, only if Squarespace didn't include THREE
+      await loadScript('https://unpkg.com/three@0.152.2/build/three.min.js');
+    }
   }
 
-  ensureLibs().then(start).catch(err => {
-    const s = $('#status'); if (s) s.textContent = `Failed to load libs: ${err.message}`;
-    console.error(err);
-    window.__DG_LOCK__ = false; // allow retry
-  });
+  // Wait until #graph has a real size (prevents 'tick' crash)
+  function waitForSize(el, timeoutMs=4000){
+    const t0 = performance.now();
+    return new Promise((resolve, reject) => {
+      (function check(){
+        const w = el.clientWidth, h = el.clientHeight;
+        if (w > 0 && h > 0) return resolve();
+        if (performance.now() - t0 > timeoutMs) return reject(new Error('graph container has zero size'));
+        requestAnimationFrame(check);
+      })();
+    });
+  }
+
+  ensureLibs()
+    .then(start)
+    .catch(err => {
+      const s = $('#status'); if (s) s.textContent = `Failed to load libs: ${err.message}`;
+      console.error(err);
+      window.__DG_LOCK__ = false;
+    });
 
   // ============================== APP ==============================
   function start(){
@@ -42,16 +64,17 @@
     const statusEl  = document.getElementById('status');
     if (!container) { console.error('#graph not found'); window.__DG_LOCK__ = false; return; }
 
-    // clean any previous canvas + UI
+    // Clean any previous canvas + UI
     container.innerHTML = '';
     Object.values(UI_IDS).forEach(rm);
 
     const THREE = window.THREE;
     const ForceGraph3D = window.ForceGraph3D;
 
-    // ----- state -----
+    // ---------- STATE ----------
     let Graph;
     let nodes=[], links=[], byId=new Map();
+
     let selectedNode=null, highlightNodes=new Set(), highlightLinkKeys=new Set();
 
     // BIGGER defaults
@@ -72,7 +95,7 @@
     const money=v=>`$${(v||0).toLocaleString()}`;
     const idOf = v => (typeof v === 'object' ? v.id : v);
 
-    // ----- data -----
+    // ---------- DATA ----------
     function randomDonation(){ const r=Math.random();
       if (r<.75) return Math.floor(50+Math.random()*50);
       if (r<.95) return Math.floor(100+Math.random()*400);
@@ -92,10 +115,10 @@
       }
       for(let i=seedRoots;i<total;i++){
         const p=pickBiasedParent(), d=randomDonation();
-        let type='primary'; if (p.children.length>0) type = p.type==='primary'?'extra':'down';
+        let type='primary'; if (p.children.length>0) type = p.type==='primary' ? 'extra' : 'down';
         const c={id:id++, type, donation:d, children:[], parent:p.id, inactive:false};
         nodes.push(c); byId.set(c.id,c); p.children.push(c.id);
-        links.push({source:p.id, target:c.id}); // numbers ok; FG will objectify
+        links.push({source:p.id, target:c.id}); // numbers OK; FG will objectify
       }
       nodes.forEach(n=>{ n.inactive=(n.children.length===0); });
       minDonation=Math.min(...nodes.map(n=>n.donation));
@@ -103,7 +126,7 @@
       return {nodes,links};
     }
 
-    // ----- metrics -----
+    // ---------- METRICS ----------
     function getBloodlineTotal(rootId){
       let t=0; const seen=new Set();
       (function dfs(id){ if(seen.has(id))return; seen.add(id);
@@ -120,13 +143,14 @@
       return {count:c,total:t,depth:d};
     }
     function collectSubtree(rootId){
-      const rows=[]; (function dfs(id){const n=byId.get(id); if(!n)return;
+      const rows=[]; (function dfs(id){ const n=byId.get(id); if(!n)return;
         rows.push({id:n.id,type:n.type,donation:n.donation,parent:n.parent,inactive:n.inactive});
         n.children.forEach(dfs);
-      })(rootId); return rows;
+      })(rootId);
+      return rows;
     }
 
-    // ----- appearance -----
+    // ---------- APPEARANCE ----------
     const typeHex = t => t==='root'?COLORS.rootHex : t==='primary'?COLORS.primaryHex : t==='extra'?COLORS.extraHex : t==='down'?COLORS.downHex : 0xaaaaaa;
     const rgbHex  = (r,g,b)=>((r&255)<<16)|((g&255)<<8)|(b&255);
     const heatHex = n => { const tt=(n.donation-minDonation)/Math.max(1,(maxDonation-minDonation));
@@ -156,7 +180,7 @@
       return showLinksAll;
     }
 
-    // ----- selection & camera -----
+    // ---------- SELECTION + CAMERA ----------
     function clearHighlights(){
       highlightNodes.clear(); highlightLinkKeys.clear(); selectedNode=null;
       updateAllNodeObjects(); Graph.refresh(); updateExportState(); syncQuery();
@@ -170,20 +194,14 @@
       const up=id=>{ links.forEach(l=>{ if(idOf(l.target)===id){ highlightLinkKeys.add(linkKey(l)); highlightNodes.add(idOf(l.source)); up(idOf(l.source)); }});
       };
       down(node.id); up(node.id);
-
       const s=getSubtreeStats(node.id);
       if (statusEl) statusEl.textContent = `Focused coin #${node.id} — subtree: ${s.count} donors, ${money(s.total)} total, depth ${s.depth}. (ESC to reset)`;
-
       updateAllNodeObjects(); Graph.refresh(); updateExportState(); focusCamera(node); syncQuery();
     }
     function focusCamera(node){
       if (!node || !Graph) return;
       const d=zoomDist;
-      Graph.cameraPosition(
-        {x:node.x+d, y:node.y+d*0.8, z:node.z+d},
-        {x:node.x,   y:node.y,        z:node.z},
-        600
-      );
+      Graph.cameraPosition({x:node.x+d, y:node.y+d*0.8, z:node.z+d},{x:node.x,y:node.y,z:node.z},600);
     }
     function applyZoomNow(){
       if (!Graph) return;
@@ -195,7 +213,7 @@
       Graph.cameraPosition({x:target.x+dir.x,y:target.y+dir.y,z:target.z+dir.z},{x:target.x,y:target.y,z:target.z},0);
     }
 
-    // ----- draw -----
+    // ---------- DRAW ----------
     function draw({nodes,links}){
       Graph = ForceGraph3D()(container)
         .backgroundColor('#000')
@@ -207,7 +225,7 @@
           n.__fill = mesh; n.__obj = mesh; return mesh;
         })
         .nodeLabel(n=>{
-          const total = getBloodlineTotal(n.id);
+          const total=getBloodlineTotal(n.id);
           return `<div><b>${n.type.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
         })
         .linkVisibility(linkVisible)
@@ -221,17 +239,29 @@
         .onNodeClick(highlightPath)
         .graphData({nodes,links});
 
-      // forces + controls
+      // Force parameters (guarded)
       try {
         Graph.d3Force('charge').strength(-universeSpread);
         Graph.d3Force('link').distance(universeSpread).strength(0.45);
         if (typeof Graph.d3ReheatSimulation === 'function') Graph.d3ReheatSimulation();
-      } catch(_) {}
+      } catch(_){}
+
       const ctrl = Graph.controls && Graph.controls();
       if (ctrl){
         ctrl.zoomSpeed = 3.2; ctrl.minDistance=40; ctrl.maxDistance=6000;
         ctrl.enableDamping = true; ctrl.dampingFactor = 0.12;
       }
+
+      // Size to container & keep updated
+      const fit = () => {
+        const w = container.clientWidth || 800;
+        const h = container.clientHeight || 600;
+        if (Graph.width) Graph.width(w);
+        if (Graph.height) Graph.height(h);
+      };
+      fit();
+      const ro = new ResizeObserver(fit);
+      ro.observe(container);
 
       updateAllNodeObjects(); Graph.refresh();
       if (statusEl) statusEl.textContent = `Ready — ${nodes.length} donors, ${links.length} referrals. Click a node.`;
@@ -240,16 +270,17 @@
       const keyHandler = (ev) => { if (ev.key === 'Escape') clearHighlights(); };
       window.addEventListener('keydown', keyHandler);
 
-      // expose destroyer for future re-inits
+      // expose destroyer
       window.__DG_APP__ = {
         destroy(){
           try { window.removeEventListener('keydown', keyHandler); } catch(_){}
+          try { ro.disconnect(); } catch(_){}
           try { Graph && Graph.pauseAnimation && Graph.pauseAnimation(); } catch(_){}
           try { container.innerHTML=''; } catch(_){}
           Object.values(UI_IDS).forEach(rm);
         }
       };
-      // release boot lock
+      // release init lock
       window.__DG_LOCK__ = false;
     }
 
@@ -265,7 +296,7 @@
       if (Graph && Graph.linkVisibility) Graph.linkVisibility(linkVisible);
     }
 
-    // ----- UI (fixed IDs so they don’t duplicate) -----
+    // ---------- UI (fixed IDs; no duplicates) ----------
     const controls = document.createElement('div');
     controls.id = UI_IDS.controls;
     Object.assign(controls.style,{position:'absolute',left:'20px',bottom:'20px',background:'rgba(0,0,0,0.6)',color:'#fff',padding:'10px',borderRadius:'8px',lineHeight:'1.1'});
@@ -317,23 +348,26 @@
     const heatChk   = $('#heatChk'),   isolateChk = $('#isolateChk'), linksChk = $('#linksChk');
     const exportBtn = $('#exportBtn');
 
-    findBtn.addEventListener('click', ()=> tryFindAndFocus(findInput.value));
-    findInput.addEventListener('keydown', e => { if (e.key==='Enter') tryFindAndFocus(findInput.value); });
-    heatChk.addEventListener('change',   e => { heatByDonation = !!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
-    isolateChk.addEventListener('change',e => { isolateView    = !!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
-    linksChk.addEventListener('change',  e => { showLinksAll   = !!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
+    findBtn.addEventListener('click',()=> tryFindAndFocus(findInput.value));
+    findInput.addEventListener('keydown',e=>{ if(e.key==='Enter') tryFindAndFocus(findInput.value); });
+    heatChk.addEventListener('change',   e=>{ heatByDonation=!!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
+    isolateChk.addEventListener('change',e=>{ isolateView   =!!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
+    linksChk.addEventListener('change',  e=>{ showLinksAll  =!!e.target.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
 
     function updateExportState(){
       if (selectedNode){ exportBtn.style.opacity='1'; exportBtn.style.cursor='pointer'; exportBtn.disabled=false; }
       else { exportBtn.style.opacity='.6'; exportBtn.style.cursor='not-allowed'; exportBtn.disabled=true; }
     }
+
     exportBtn.addEventListener('click', ()=>{
       if (!selectedNode) return;
       const rows=collectSubtree(selectedNode.id);
       const header='coin_id,type,donation,parent_id,inactive\n';
       const body=rows.map(r=>`${r.id},${r.type},${r.donation},${r.parent??''},${r.inactive}`).join('\n');
-      const blob=new Blob([header+body],{type:'text/csv'}); const url=URL.createObjectURL(blob);
-      const a=document.createElement('a'); a.href=url; a.download=`subtree_${selectedNode.id}.csv`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      const blob=new Blob([header+body],{type:'text/csv'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a'); a.href=url; a.download=`subtree_${selectedNode.id}.csv`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     });
 
     const filters=document.createElement('div');
@@ -350,7 +384,7 @@
     });
     document.body.appendChild(filters);
 
-    // ---- find + URL ----
+    // ---- Find + URL ----
     function tryFindAndFocus(raw){
       const id = Number(String(raw||'').replace(/\D/g,'')); if(!Number.isFinite(id)) return pulse(findInput,'#ff6b6b');
       const node = byId.get(id); if(!node) return pulse(findInput,'#ffb020');
@@ -361,27 +395,35 @@
 
     function applyQuery(){
       const p=new URLSearchParams(location.search);
-      const qs=+p.get('size'); if(qs){ nodeSize=qs; $('#'+UI_IDS.controls+' input[type=range]').value=nodeSize; }
-      const qsp=+p.get('spread'); if(qsp){ universeSpread=qsp; }
-      const qz=+p.get('zoom'); if(qz){ zoomDist=qz; applyZoomNow(); }
+      const qs=+p.get('size');   if(qs){ nodeSize=qs; sliderNode.value=nodeSize; }
+      const qsp=+p.get('spread');if(qsp){ universeSpread=qsp; sliderSpread.value=universeSpread; }
+      const qz=+p.get('zoom');   if(qz){ zoomDist=qz; sliderZoom.value=zoomDist; applyZoomNow(); }
       const qi=p.get('isolate'); if(qi==='1'){ isolateView=true; $('#isolateChk').checked=true; }
-      const qh=p.get('heat'); if(qh==='1'){ heatByDonation=true; $('#heatChk').checked=true; } else { heatByDonation=false; $('#heatChk').checked=false; }
-      const ql=p.get('links'); if(ql==='1'){ showLinksAll=true; $('#linksChk').checked=true; } else { showLinksAll=false; $('#linksChk').checked=false; }
-      const qt=p.get('types'); if(qt){ visibleTypes.clear(); qt.split(',').forEach(t=>t&&visibleTypes.add(t));
-        Array.from(document.querySelectorAll('#'+UI_IDS.filters+' input[type=checkbox]')).forEach((cb,i)=>{ const key=TYPES[i][0]; cb.checked=visibleTypes.has(key); });}
+      const qh=p.get('heat');    if(qh==='1'){ heatByDonation=true; $('#heatChk').checked=true; } else { heatByDonation=false; $('#heatChk').checked=false; }
+      const ql=p.get('links');   if(ql==='1'){ showLinksAll=true; $('#linksChk').checked=true; } else { showLinksAll=false; $('#linksChk').checked=false; }
+      const qt=p.get('types');   if(qt){ visibleTypes.clear(); qt.split(',').forEach(t=>t&&visibleTypes.add(t));
+        Array.from(filters.querySelectorAll('input[type=checkbox]')).forEach((cb,i)=>{ const key=TYPES[i][0]; cb.checked=visibleTypes.has(key); }); }
       updateAllNodeObjects(); Graph.refresh();
     }
     function syncQuery(){
       const p=new URLSearchParams(location.search);
-      if (selectedNode) p.set('find',selectedNode.id); else p.delete('find');
-      p.set('size',String(nodeSize)); p.set('spread',String(universeSpread)); p.set('zoom',String(zoomDist));
-      p.set('isolate',isolateView?'1':'0'); p.set('heat',heatByDonation?'1':'0'); p.set('links',showLinksAll?'1':'0');
-      p.set('types',Array.from(visibleTypes).join(',')); history.replaceState({},'',`${location.pathname}?${p.toString()}`);
+      if (selectedNode) p.set('find', selectedNode.id); else p.delete('find');
+      p.set('size', String(nodeSize)); p.set('spread', String(universeSpread)); p.set('zoom', String(zoomDist));
+      p.set('isolate', isolateView?'1':'0'); p.set('heat', heatByDonation?'1':'0'); p.set('links', showLinksAll?'1':'0');
+      p.set('types', Array.from(visibleTypes).join(',')); history.replaceState({},'',`${location.pathname}?${p.toString()}`);
     }
 
-    // ---- run ----
-    const data = generateUniverse(3200,250);
-    draw(data);
-    applyQuery();
+    // ---------- BOOT WHEN CONTAINER HAS SIZE ----------
+    waitForSize(container)
+      .then(() => {
+        const data = generateUniverse(3200,250);
+        draw(data);
+        applyQuery();
+      })
+      .catch(err => {
+        if (statusEl) statusEl.textContent = `Layout error: ${err.message}`;
+        console.error(err);
+        window.__DG_LOCK__ = false;
+      });
   }
 })();
