@@ -1,16 +1,13 @@
 (() => {
-  // ---------- Safe-load required libs (Three.js and 3d-force-graph) ----------
+  // ---------- Load libs safely (Squarespace-friendly) ----------
   function loadScript(src) {
     return new Promise((resolve, reject) => {
       const s = document.createElement('script');
-      s.src = src;
-      s.async = true;
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error(`Failed to load ${src}`));
+      s.src = src; s.async = true;
+      s.onload = resolve; s.onerror = () => reject(new Error(`Failed to load ${src}`));
       document.head.appendChild(s);
     });
   }
-
   async function ensureLibs() {
     if (typeof window.THREE === 'undefined') {
       await loadScript('https://unpkg.com/three@0.155.0/build/three.min.js');
@@ -20,10 +17,9 @@
     }
   }
 
-  // Kickoff once libs are ready
   ensureLibs().then(start).catch(err => {
     const statusEl = document.getElementById('status');
-    if (statusEl) statusEl.textContent = `Failed to load libraries: ${err.message}`;
+    if (statusEl) statusEl.textContent = `Failed to load libs: ${err.message}`;
     console.error(err);
   });
 
@@ -32,7 +28,7 @@
     const container = document.getElementById("graph");
     const statusEl  = document.getElementById("status");
 
-    const THREE = window.THREE; // guaranteed by ensureLibs()
+    const THREE = window.THREE;
     const ForceGraph3D = window.ForceGraph3D;
 
     let Graph;
@@ -48,28 +44,25 @@
     let nodeSize = 4;
     let universeSpread = 60;
     let zoomDist = 90;
-    let heatByDonation = false;
+    let heatByDonation = false;      // OFF by default
     let isolateView = false;
+    let showLeafOutline = false;     // OFF by default
 
-    // Show/hide types (real types only)
-    const visibleTypes = new Set(["root","primary","extra","down"]);
+    const visibleTypes = new Set(["root","primary","extra","down"]); // type filters (true color only)
 
-    // Leaf outline toggle (yellow ring)
-    let showLeafOutline = true;
-
-    // donation range (for heat)
+    // donation range for heat
     let minDonation = 0, maxDonation = 1;
 
     const COLORS = {
-      root: "#1f4aa8", primary: "#7cc3ff", extra: "#2ecc71", down: "#e74c3c",
-      inactiveOutline: 0xffdd00,         // yellow ring for leaves
+      rootHex: 0x1f4aa8, primaryHex: 0x7cc3ff, extraHex: 0x2ecc71, downHex: 0xe74c3c,
+      inactiveOutline: 0xffdd00,   // leaf ring only
       forward: "#00ff88", back: "#ffdd33",
       selected: "#ffffff", faded: "rgba(100,100,100,0.18)", hidden: "rgba(0,0,0,0)"
     };
 
     const money = v => `$${(v||0).toLocaleString()}`;
 
-    // --------- generate data ----------
+    // ---------- data ----------
     function randomDonation() {
       const r = Math.random();
       if (r < 0.75) return Math.floor(50 + Math.random() * 50);
@@ -104,7 +97,7 @@
       return {nodes,links};
     }
 
-    // --------- helpers ----------
+    // ---------- helpers ----------
     function getBloodlineTotal(rootId){
       let total=0; const seen=new Set();
       (function dfs(id){ if(seen.has(id)) return; seen.add(id);
@@ -128,21 +121,24 @@
       })(rootId); return rows;
     }
 
-    // appearance/filters
+    // ---- colors/sizing ----
+    const typeHex = (t) => (
+      t === "root"    ? COLORS.rootHex :
+      t === "primary" ? COLORS.primaryHex :
+      t === "extra"   ? COLORS.extraHex :
+      t === "down"    ? COLORS.downHex  : 0xaaaaaa
+    );
+    const rgbHex = (r,g,b) => ((r&255)<<16)|((g&255)<<8)|(b&255);
+    function heatHex(n) {
+      const t = (n.donation - minDonation) / Math.max(1, (maxDonation - minDonation));
+      const r = Math.round(255 * t);
+      const g = Math.round(255 * (1 - 0.3*t));
+      return rgbHex(r, g, 60);
+    }
+    function fillHex(n){ return heatByDonation ? heatHex(n) : typeHex(n.type); }
     function radiusFor(n){
       if (!nodeShouldDisplay(n)) return 0.001;
       return heatByDonation ? Math.max(2, nodeSize * (n.donation / 100)) : nodeSize;
-    }
-    function baseColorFor(n){
-      if (heatByDonation){
-        // green (min) → yellow → red (max)
-        const t=(n.donation-minDonation)/Math.max(1,(maxDonation-minDonation));
-        const r=Math.floor(255*t), g=Math.floor(255*(1-0.3*t));
-        return new THREE.Color(`rgb(${r},${g},60)`);
-      }
-      // Typed colors (default)
-      const map={root:COLORS.root, primary:COLORS.primary, extra:COLORS.extra, down:COLORS.down};
-      return new THREE.Color(map[n.type]||"#aaaaaa");
     }
     function nodeIsVisibleByType(n){ return visibleTypes.has(n.type); }
     function nodeShouldDisplay(n){
@@ -157,7 +153,7 @@
       return `${s}->${t}`;
     }
 
-    // --------- selection / camera ----------
+    // ---------- selection / camera ----------
     function clearHighlights(){
       highlightNodes.clear(); highlightLinkKeys.clear(); selectedNode=null;
       updateAllNodeObjects();
@@ -180,34 +176,35 @@
       Graph.cameraPosition({x:node.x+dist,y:node.y+dist*0.8,z:node.z+dist},{x:node.x,y:node.y,z:node.z},800);
     }
 
-    // --------- draw (NO nodeThreeObjectUpdate) ----------
+    // ---------- draw ----------
     function draw({nodes,links}){
       Graph = ForceGraph3D()(container)
         .backgroundColor("#000")
         .nodeThreeObject(n => {
-          // Create once; keep refs for updates
+          // Make + keep refs so we can update later
           const group = new THREE.Group();
+
+          // self-lit fill
           const fill = new THREE.Mesh(
-            new THREE.SphereGeometry(1, 12, 12),
-            new THREE.MeshBasicMaterial({ color: baseColorFor(n) })
+            new THREE.SphereGeometry(1, 16, 16),
+            new THREE.MeshBasicMaterial({ color: fillHex(n) })
           );
           fill.name = "__fill";
           group.add(fill);
 
+          // outline (created but managed by toggle so it never forces yellow fill)
           const outline = new THREE.Mesh(
-            new THREE.SphereGeometry(1.02, 12, 12),
-            new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true, transparent: true, opacity: 0.95 })
+            new THREE.SphereGeometry(1.02, 16, 16),
+            new THREE.MeshBasicMaterial({ color: COLORS.inactiveOutline, wireframe: true })
           );
           outline.name = "__outline";
           group.add(outline);
 
-          // stash refs
           n.__obj = group; n.__fill = fill; n.__outline = outline;
-
           return group;
         })
         .nodeLabel(n=>{
-          const total=getBloodlineTotal(n.id); 
+          const total=getBloodlineTotal(n.id);
           return `<div><b>${n.type.toUpperCase()}</b><br/>Coin #: ${n.id}<br/>Donation: ${money(n.donation)}<br/><b>Bloodline Total:</b> ${money(total)}</div>`;
         })
         .linkColor(l=>{
@@ -221,15 +218,15 @@
         })
         .linkWidth(l => (highlightLinkKeys.has(linkKey(l)) ? 2.2 : 0.4))
         .onNodeClick(highlightPath)
-        .graphData({nodes,links}); // apply data
+        .graphData({nodes,links});
 
-      // Configure forces without global d3
+      // force settings (guarded)
       try {
         Graph.d3Force('charge').strength(-universeSpread);
         Graph.d3Force('link').distance(universeSpread).strength(0.4);
-      } catch (_) { /* fallback if not exposed */ }
+      } catch(_) {}
 
-      // First paint pass
+      // first appearance pass
       updateAllNodeObjects();
       Graph.refresh();
 
@@ -237,7 +234,7 @@
       window.addEventListener("keydown",ev=>{ if(ev.key==="Escape") clearHighlights(); });
     }
 
-    // --------- update pass (called on any state change) ----------
+    // ---------- update appearance ----------
     function updateAllNodeObjects(){
       nodes.forEach(n => {
         const obj = n.__obj, fill = n.__fill, outline = n.__outline;
@@ -246,22 +243,24 @@
         // visibility (filters / isolate)
         obj.visible = nodeShouldDisplay(n);
 
-        // radius
+        // radius + color
         const r = Math.max(0.001, radiusFor(n));
-
-        // color with selection/fade logic
-        let color = baseColorFor(n); // typed or heat
+        const hex = fillHex(n);
+        fill.material.color.setHex(hex);
         if (selectedNode){
-          if (!highlightNodes.has(n.id)) color = new THREE.Color(COLORS.faded);
-          else if (n.id === selectedNode.id) color = new THREE.Color(COLORS.selected);
+          if (!highlightNodes.has(n.id)) {
+            // dim when not in focus
+            fill.material.color = new THREE.Color(COLORS.faded);
+          } else if (n.id === selectedNode.id) {
+            fill.material.color = new THREE.Color(COLORS.selected);
+          } else {
+            fill.material.color.setHex(hex);
+          }
         }
-        fill.material.color.copy(color);
-
-        // scale
         fill.scale.set(r, r, r);
 
-        // leaf outline visibility
-        outline.visible = showLeafOutline && !!n.inactive;
+        // leaf ring — **never** overrides fill, purely optional
+        outline.visible = showLeafOutline && n.inactive;
         outline.scale.set(r*1.18, r*1.18, r*1.18);
       });
     }
@@ -311,10 +310,10 @@
     });
     legend.innerHTML = `
       <b>Legend</b><br>
-      <span style="color:${COLORS.root}">●</span> Root<br>
-      <span style="color:${COLORS.primary}">●</span> Primary<br>
-      <span style="color:${COLORS.extra}">●</span> Extra<br>
-      <span style="color:${COLORS.down}">●</span> Downline<br>
+      <span style="color:#1f4aa8">●</span> Root<br>
+      <span style="color:#7cc3ff">●</span> Primary<br>
+      <span style="color:#2ecc71">●</span> Extra<br>
+      <span style="color:#e74c3c">●</span> Downline<br>
       <span style="color:#ffdd00">◌</span> Leaf outline (inactive)<br>
       <span style="color:${COLORS.forward}">●</span> Forward path<br>
       <span style="color:${COLORS.back}">●</span> Backtrace<br>
@@ -397,11 +396,11 @@
       filters.appendChild(w);
     });
 
-    // Leaf outline toggle (doesn't hide nodes)
+    // Leaf outline toggle (never affects fill color)
     const leafWrap = document.createElement("label");
     leafWrap.style.display="flex"; leafWrap.style.alignItems="center"; leafWrap.style.gap=".35rem";
     const leafCb = document.createElement("input"); leafCb.type="checkbox"; leafCb.checked = showLeafOutline;
-    leafCb.addEventListener("change", () => { showLeafOutline = leafCb.checked; updateAllNodeObjects(); Graph.refresh(); });
+    leafCb.addEventListener("change", () => { showLeafOutline = leafCb.checked; updateAllNodeObjects(); Graph.refresh(); syncQuery(); });
     leafWrap.appendChild(leafCb);
     leafWrap.appendChild(document.createTextNode("Inactive (leaf outline)"));
     filters.appendChild(leafWrap);
@@ -434,17 +433,13 @@
       if (qTypes){
         visibleTypes.clear();
         qTypes.split(",").forEach(t => { if (t) visibleTypes.add(t); });
-        // sync type checkboxes (skip leaf toggle)
         Array.from(filters.querySelectorAll("input[type=checkbox]")).slice(0, TYPE_ENTRIES.length).forEach((cb,i)=>{
           const key = TYPE_ENTRIES[i][0]; cb.checked = visibleTypes.has(key);
         });
       }
-      const qLeaf = p.get("leaf");
-      if (qLeaf != null) { showLeafOutline = qLeaf === "1"; leafCb.checked = showLeafOutline; }
-
+      const qLeaf = p.get("leaf"); if (qLeaf != null) { showLeafOutline = qLeaf === "1"; leafCb.checked = showLeafOutline; }
       updateAllNodeObjects(); Graph.refresh();
     }
-
     function syncQuery(){
       const p = new URLSearchParams(location.search);
       if (selectedNode) p.set("find", selectedNode.id); else p.delete("find");
@@ -461,6 +456,6 @@
     // --------- run ----------
     const data = generateUniverse(3200, 250);
     draw(data);
-    applyQuery(); // optional URL restore
+    applyQuery(); // honor URL state if present
   }
 })();
